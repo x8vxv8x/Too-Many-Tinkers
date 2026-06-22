@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "priority": 1001,
+  "package": "com.smd.toomanytinkers.mixin.client",
+  "compatibilityLevel": "JAVA_8",
+  "target": "@env(DEFAULT)",
+  "client": [
+    "minecraft.RenderItemMixin"
+  ],
+  "mixins": [],
+  "server": [],
+  "setSourceFile": true,
+  "minVersion": "0.8.7"
+}
