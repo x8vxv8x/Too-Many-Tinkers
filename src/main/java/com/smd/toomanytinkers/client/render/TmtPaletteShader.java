@@ -21,8 +21,11 @@ public final class TmtPaletteShader {
             #version 120
             uniform sampler2D uAtlas;
             uniform sampler2D uLut;
+            uniform sampler2D uSource;
             uniform int uLutHeight;
+            uniform int uSourceHeight;
             uniform int uMaterialRow;
+            uniform int uSourceLayer;
             varying vec2 vTex;
             void main() {
                 vec4 param = texture2D(uAtlas, vTex);
@@ -33,6 +36,12 @@ public final class TmtPaletteShader {
                     float x = clamp(param.r, 0.0, 1.0);
                     float y = (float(uMaterialRow) + 0.5) / float(uLutHeight);
                     vec4 mapped = texture2D(uLut, vec2(x, y));
+                    if (uSourceLayer >= 0) {
+                        float sx = (clamp(param.g, 0.0, 1.0) * 15.0 + 0.5) / 16.0;
+                        float sy = (float(uSourceLayer) * 16.0 + clamp(param.b, 0.0, 1.0) * 15.0 + 0.5) / float(uSourceHeight);
+                        vec4 source = texture2D(uSource, vec2(sx, sy));
+                        mapped = vec4(mapped.rgb * source.rgb, mapped.a * source.a);
+                    }
                     gl_FragColor = vec4(mapped.rgb, mapped.a * param.a);
                 }
             }
@@ -41,6 +50,8 @@ public final class TmtPaletteShader {
     private static int program;
     private static int materialRowUniform;
     private static int lutHeightUniform;
+    private static int sourceHeightUniform;
+    private static int sourceLayerUniform;
 
     private TmtPaletteShader() {
     }
@@ -50,12 +61,15 @@ public final class TmtPaletteShader {
         OpenGlHelper.glUseProgram(program);
         OpenGlHelper.glUniform1i(OpenGlHelper.glGetUniformLocation(program, "uAtlas"), 0);
         OpenGlHelper.glUniform1i(OpenGlHelper.glGetUniformLocation(program, "uLut"), 1);
+        OpenGlHelper.glUniform1i(OpenGlHelper.glGetUniformLocation(program, "uSource"), 2);
         OpenGlHelper.glUniform1i(lutHeightUniform, MaterialLutManager.getHeight());
+        OpenGlHelper.glUniform1i(sourceHeightUniform, MaterialSourceTextureManager.getHeight());
     }
 
-    public static void setMaterialRow(int row) {
+    public static void setMaterial(int row, int sourceLayer) {
         ensureProgram();
         OpenGlHelper.glUniform1i(materialRowUniform, row);
+        OpenGlHelper.glUniform1i(sourceLayerUniform, sourceLayer);
     }
 
     public static void unbind() {
@@ -79,6 +93,8 @@ public final class TmtPaletteShader {
         OpenGlHelper.glDeleteShader(fragment);
         materialRowUniform = OpenGlHelper.glGetUniformLocation(program, "uMaterialRow");
         lutHeightUniform = OpenGlHelper.glGetUniformLocation(program, "uLutHeight");
+        sourceHeightUniform = OpenGlHelper.glGetUniformLocation(program, "uSourceHeight");
+        sourceLayerUniform = OpenGlHelper.glGetUniformLocation(program, "uSourceLayer");
     }
 
     private static int compile(int shaderType, String source) {

@@ -28,6 +28,8 @@ public final class TmtGpuToolRenderer {
         mc.getTextureManager().bindTexture(TextureMap.LOCATION_BLOCKS_TEXTURE);
         OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit + 1);
         mc.getTextureManager().bindTexture(MaterialLutManager.getTextureLocation());
+        OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit + 2);
+        mc.getTextureManager().bindTexture(MaterialSourceTextureManager.getTextureLocation());
         OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
 
         GlStateManager.enableBlend();
@@ -43,14 +45,14 @@ public final class TmtGpuToolRenderer {
         try {
             if (model instanceof TmtResolvedPartModel) {
                 TmtResolvedPartModel part = (TmtResolvedPartModel) model;
-                drawModel(part.getBaseModel(), MaterialLutManager.getMaterialRow(part.getMaterialId()));
+                drawModel(part.getBaseModel(), part.getMaterialId());
             } else if (model instanceof TmtResolvedToolModel) {
                 TmtResolvedToolModel tool = (TmtResolvedToolModel) model;
                 for (TmtResolvedToolModel.PartInstance part : tool.getParts()) {
-                    drawModel(part.getBaseModel(), MaterialLutManager.getMaterialRow(part.getMaterialId()));
+                    drawModel(part.getBaseModel(), part.getMaterialId());
                 }
                 for (IBakedModel vanillaModel : tool.getVanillaModels()) {
-                    drawModel(vanillaModel, -1);
+                    drawModel(vanillaModel, null);
                 }
             }
         } finally {
@@ -60,13 +62,17 @@ public final class TmtGpuToolRenderer {
 
         OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit + 1);
         GlStateManager.bindTexture(0);
+        OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit + 2);
+        GlStateManager.bindTexture(0);
         OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
         mc.getTextureManager().bindTexture(TextureMap.LOCATION_BLOCKS_TEXTURE);
         return true;
     }
 
-    private static void drawModel(IBakedModel model, int materialRow) {
-        TmtPaletteShader.setMaterialRow(materialRow);
+    private static void drawModel(IBakedModel model, String materialId) {
+        int materialRow = materialId == null ? -1 : MaterialLutManager.getMaterialRow(materialId);
+        int sourceLayer = materialId == null ? -1 : MaterialSourceTextureManager.getSourceLayer(materialId);
+        TmtPaletteShader.setMaterial(materialRow, sourceLayer);
         Tessellator tessellator = Tessellator.getInstance();
         BufferBuilder buffer = tessellator.getBuffer();
         buffer.begin(GL11.GL_QUADS, DefaultVertexFormats.ITEM);
