@@ -25,15 +25,15 @@ public final class TmtPaletteShader {
             uniform int uMaterialRow;
             varying vec2 vTex;
             void main() {
-                vec4 src = texture2D(uAtlas, vTex);
-                if (src.a < 0.1) discard;
+                vec4 param = texture2D(uAtlas, vTex);
+                if (param.a < 0.1) discard;
                 if (uMaterialRow < 0) {
-                    gl_FragColor = src;
+                    gl_FragColor = param;
                 } else {
-                    float x = clamp(src.r, 0.0, 1.0);
+                    float x = clamp(param.r, 0.0, 1.0);
                     float y = (float(uMaterialRow) + 0.5) / float(uLutHeight);
                     vec4 mapped = texture2D(uLut, vec2(x, y));
-                    gl_FragColor = vec4(mapped.rgb, mapped.a * src.a);
+                    gl_FragColor = vec4(mapped.rgb, mapped.a * param.a);
                 }
             }
             """;
