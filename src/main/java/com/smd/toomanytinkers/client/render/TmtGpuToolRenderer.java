@@ -1,8 +1,11 @@
 package com.smd.toomanytinkers.client.render;
 
 import com.smd.toomanytinkers.client.model.TmtGpuItemModel;
+import com.smd.toomanytinkers.client.model.TmtGpuToolStackModel;
+import com.smd.toomanytinkers.client.model.TmtPartDefinition;
 import com.smd.toomanytinkers.client.model.TmtResolvedPartModel;
 import com.smd.toomanytinkers.client.model.TmtResolvedToolModel;
+import com.smd.toomanytinkers.client.model.TmtToolRenderDescriptor;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.BufferBuilder;
 import net.minecraft.client.renderer.GlStateManager;
@@ -13,6 +16,7 @@ import net.minecraft.client.renderer.block.model.IBakedModel;
 import net.minecraft.client.renderer.texture.TextureMap;
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
 import net.minecraft.util.EnumFacing;
+import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.client.model.pipeline.LightUtil;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL15;
@@ -77,7 +81,7 @@ public final class TmtGpuToolRenderer {
     private static boolean renderInstanced(TmtGpuItemModel model) {
         RenderBuckets buckets = new RenderBuckets();
         collect(model, buckets);
-        if (buckets.hasLegacyModels || buckets.instanced.isEmpty()) {
+        if (buckets.hasLegacyModels || (buckets.instanced.isEmpty() && buckets.spriteInstanced.isEmpty())) {
             return false;
         }
         if (!TmtInstancedPaletteShader.bind()) {
@@ -86,6 +90,15 @@ public final class TmtGpuToolRenderer {
         try {
             for (Map.Entry<PartMeshCache.PartMesh, List<TmtInstanceBuffer.InstanceData>> entry : buckets.instanced.entrySet()) {
                 PartMeshCache.PartMesh mesh = entry.getKey();
+                List<TmtInstanceBuffer.InstanceData> instances = entry.getValue();
+                mesh.bind();
+                int instanceCount = INSTANCE_BUFFER.upload(instances);
+                INSTANCE_BUFFER.bindAttributes();
+                GL31.glDrawElementsInstanced(GL11.GL_TRIANGLES, mesh.getIndexCount(), GL11.GL_UNSIGNED_INT, 0L, instanceCount);
+                TmtRenderStats.instancedDrawCall();
+            }
+            for (Map.Entry<PartSpriteMeshCache.PartMesh, List<TmtInstanceBuffer.InstanceData>> entry : buckets.spriteInstanced.entrySet()) {
+                PartSpriteMeshCache.PartMesh mesh = entry.getKey();
                 List<TmtInstanceBuffer.InstanceData> instances = entry.getValue();
                 mesh.bind();
                 int instanceCount = INSTANCE_BUFFER.upload(instances);
@@ -113,6 +126,29 @@ public final class TmtGpuToolRenderer {
             for (IBakedModel vanillaModel : tool.getVanillaModels()) {
                 addInstance(vanillaModel, null, buckets);
             }
+        } else if (model instanceof TmtGpuToolStackModel) {
+            TmtGpuToolStackModel tool = (TmtGpuToolStackModel) model;
+            for (TmtToolRenderDescriptor.PartInstance part : tool.getDescriptor().getParts()) {
+                addSpritePart(part.getDefinition(), part.getMaterialId(), buckets);
+            }
+        }
+    }
+
+    private static void addSpritePart(TmtPartDefinition definition, String materialId, RenderBuckets buckets) {
+        for (ResourceLocation baseTexture : definition.getTextures()) {
+            ResourceLocation texture = materialId == null
+                    ? baseTexture
+                    : MaterialDescriptorRegistry.resolveParamMap(baseTexture, materialId);
+            PartSpriteMeshCache.PartMesh mesh = PartSpriteMeshCache.get(texture, definition);
+            if (mesh == null) {
+                continue;
+            }
+            MaterialDescriptor descriptor = materialId == null ? null : MaterialDescriptorRegistry.get(materialId);
+            int materialRow = descriptor == null ? -1 : descriptor.getRampRow();
+            int sourceLayer = descriptor == null ? -1 : descriptor.getSourceLayer();
+            int flags = descriptor == null ? 0 : descriptor.getFlags();
+            buckets.spriteInstanced.computeIfAbsent(mesh, ignored -> new ArrayList<>())
+                    .add(new TmtInstanceBuffer.InstanceData(materialRow, sourceLayer, flags));
         }
     }
 
@@ -184,6 +220,8 @@ public final class TmtGpuToolRenderer {
 
     private static class RenderBuckets {
         private final Map<PartMeshCache.PartMesh, List<TmtInstanceBuffer.InstanceData>> instanced =
+                new LinkedHashMap<>();
+        private final Map<PartSpriteMeshCache.PartMesh, List<TmtInstanceBuffer.InstanceData>> spriteInstanced =
                 new LinkedHashMap<>();
         private boolean hasLegacyModels;
     }
