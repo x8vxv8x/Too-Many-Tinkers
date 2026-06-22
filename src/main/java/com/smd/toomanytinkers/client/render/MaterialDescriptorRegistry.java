@@ -32,7 +32,7 @@ public final class MaterialDescriptorRegistry {
         DESCRIPTORS.clear();
         REGISTERED_MASKS.clear();
         TmtPartMaskMapManager.rebuildStart();
-        TmtMaterialMapManager.rebuildStart(TinkerRegistry.getAllMaterials().size());
+        TmtMaterialMapManager.rebuildStart();
         Set<String> suffixes = new LinkedHashSet<>();
         for (Material material : TinkerRegistry.getAllMaterials()) {
             MaterialDescriptor descriptor = createDescriptor(material);
@@ -41,6 +41,7 @@ public final class MaterialDescriptorRegistry {
                 suffixes.add(descriptor.getTextureSuffix());
             }
         }
+        TmtMaterialMapManager.finishUpload();
 
         int registeredMasks = registerMasks(baseTextures, suffixes);
         rebuilds++;
@@ -86,6 +87,10 @@ public final class MaterialDescriptorRegistry {
         return TmtPartMaskMapManager.getSlot(texture);
     }
 
+    public static boolean[] getOpacity(ResourceLocation texture) {
+        return TmtPartMaskMapManager.getOpacity(texture);
+    }
+
     private static MaterialDescriptor createDescriptor(Material material) {
         MaterialRenderInfo info = material.renderInfo;
         String suffix = info == null ? null : info.getTextureSuffix();
@@ -105,7 +110,15 @@ public final class MaterialDescriptorRegistry {
         }
         TmtMaterialMapManager.Allocation allocation = TmtMaterialMapManager.addMaterial(material, source);
         MaterialRenderMode mode = source == null ? MaterialRenderMode.RAMP : MaterialRenderMode.RAMP_SOURCE;
-        return new MaterialDescriptor(material.identifier, allocation.getType(), allocation.getIndex(), -1, flags, mode, suffix, source);
+        return new MaterialDescriptor(material.identifier,
+                allocation.getType(),
+                allocation.getIndex(),
+                allocation.getSourceIndex(),
+                -1,
+                flags,
+                mode,
+                suffix,
+                source);
     }
 
     @Nullable

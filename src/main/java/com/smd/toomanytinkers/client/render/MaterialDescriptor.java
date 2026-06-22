@@ -7,9 +7,8 @@ import javax.annotation.Nullable;
 public final class MaterialDescriptor {
 
     public static final int TYPE_DIRECT = 0;
-    public static final int TYPE_SOLID = 1;
-    public static final int TYPE_RAMP = 2;
-    public static final int TYPE_TEXTURE = 3;
+    public static final int TYPE_RAMP = 1;
+    public static final int TYPE_TEXTURE = 2;
 
     public static final int FLAG_VERTEX_COLOR = 1;
     public static final int FLAG_TEXTURE_SUFFIX = 1 << 1;
@@ -19,6 +18,7 @@ public final class MaterialDescriptor {
     private final String materialId;
     private final int materialType;
     private final int materialIndex;
+    private final int sourceIndex;
     private final int animationId;
     private final int flags;
     private final MaterialRenderMode renderMode;
@@ -28,6 +28,7 @@ public final class MaterialDescriptor {
     public MaterialDescriptor(String materialId,
                               int materialType,
                               int materialIndex,
+                              int sourceIndex,
                               int animationId,
                               int flags,
                               MaterialRenderMode renderMode,
@@ -36,6 +37,7 @@ public final class MaterialDescriptor {
         this.materialId = materialId;
         this.materialType = materialType;
         this.materialIndex = materialIndex;
+        this.sourceIndex = sourceIndex;
         this.animationId = animationId;
         this.flags = flags;
         this.renderMode = renderMode;
@@ -61,6 +63,10 @@ public final class MaterialDescriptor {
 
     public int getMaterialIndex() {
         return materialIndex;
+    }
+
+    public int getSourceIndex() {
+        return sourceIndex;
     }
 
     public int getAnimationId() {

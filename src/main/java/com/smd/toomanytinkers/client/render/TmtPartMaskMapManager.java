@@ -43,13 +43,11 @@ public final class TmtPartMaskMapManager {
     }
 
     public static int getSlot(ResourceLocation texture) {
-        MaskEntry entry = MASKS.get(texture);
-        return entry == null ? 0 : entry.slot;
+        return getOrRegister(texture).slot;
     }
 
     public static boolean[] getOpacity(ResourceLocation texture) {
-        MaskEntry entry = MASKS.get(texture);
-        return entry == null ? MASKS.get(MISSING).opaque : entry.opaque;
+        return getOrRegister(texture).opaque;
     }
 
     public static ResourceLocation getTextureLocation() {
@@ -111,6 +109,22 @@ public final class TmtPartMaskMapManager {
             }
         }
         return new MaskEntry(slot, pixels, opaque);
+    }
+
+    private static MaskEntry getOrRegister(ResourceLocation texture) {
+        MaskEntry entry = MASKS.get(texture);
+        if (entry != null) {
+            return entry;
+        }
+        registerMask(texture);
+        entry = MASKS.get(texture);
+        if (entry != null) {
+            return entry;
+        }
+        if (!MASKS.containsKey(MISSING)) {
+            registerMask(MISSING);
+        }
+        return MASKS.get(MISSING);
     }
 
     @Nullable

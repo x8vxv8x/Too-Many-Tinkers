@@ -24,27 +24,51 @@ public final class TmtInstanceBuffer {
     private int ssbo;
     private int capacity;
     private ByteBuffer uploadBuffer;
+    private int uploadingInstances;
 
     public void beginUpload(int instances) {
         ensureBuffer();
         ensureCapacity(instances);
         ensureUploadBuffer(instances);
+        uploadingInstances = instances;
         uploadBuffer.clear();
+        uploadBuffer.limit(Math.max(1, instances) * BYTES_PER_INSTANCE);
     }
 
     public void putInstance(Matrix4f model,
                             int maskSlot,
                             int materialType,
                             int materialIndex,
+                            int sourceIndex,
                             int flags) {
         putMatrix(uploadBuffer, model);
         uploadBuffer.putFloat(0f).putFloat(0f).putFloat(0f).putFloat(0f);
-        uploadBuffer.putInt(pack(maskSlot, materialType, materialIndex, flags)).putInt(0).putInt(0).putInt(0);
+        uploadBuffer.putInt(pack(maskSlot, materialType, materialIndex, flags)).putInt(sourceIndex).putInt(0).putInt(0);
+    }
+
+    public void putInstanceAt(int index,
+                              Matrix4f model,
+                              int maskSlot,
+                              int materialType,
+                              int materialIndex,
+                              int sourceIndex,
+                              int flags) {
+        int offset = index * BYTES_PER_INSTANCE;
+        putMatrixAt(uploadBuffer, offset, model);
+        uploadBuffer.putFloat(offset + 64, 0f);
+        uploadBuffer.putFloat(offset + 68, 0f);
+        uploadBuffer.putFloat(offset + 72, 0f);
+        uploadBuffer.putFloat(offset + 76, 0f);
+        uploadBuffer.putInt(offset + 80, pack(maskSlot, materialType, materialIndex, flags));
+        uploadBuffer.putInt(offset + 84, Math.max(0, sourceIndex));
+        uploadBuffer.putInt(offset + 88, 0);
+        uploadBuffer.putInt(offset + 92, 0);
     }
 
     public int finishUpload() {
-        int instances = uploadBuffer.position() / BYTES_PER_INSTANCE;
-        uploadBuffer.flip();
+        int instances = uploadingInstances;
+        uploadBuffer.position(0);
+        uploadBuffer.limit(Math.max(1, instances) * BYTES_PER_INSTANCE);
 
         GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, ssbo);
         GL15.glBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER, 0L, uploadBuffer);
@@ -107,5 +131,24 @@ public final class TmtInstanceBuffer {
         buffer.putFloat(matrix.m01).putFloat(matrix.m11).putFloat(matrix.m21).putFloat(matrix.m31);
         buffer.putFloat(matrix.m02).putFloat(matrix.m12).putFloat(matrix.m22).putFloat(matrix.m32);
         buffer.putFloat(matrix.m03).putFloat(matrix.m13).putFloat(matrix.m23).putFloat(matrix.m33);
+    }
+
+    private static void putMatrixAt(ByteBuffer buffer, int offset, Matrix4f matrix) {
+        buffer.putFloat(offset, matrix.m00);
+        buffer.putFloat(offset + 4, matrix.m10);
+        buffer.putFloat(offset + 8, matrix.m20);
+        buffer.putFloat(offset + 12, matrix.m30);
+        buffer.putFloat(offset + 16, matrix.m01);
+        buffer.putFloat(offset + 20, matrix.m11);
+        buffer.putFloat(offset + 24, matrix.m21);
+        buffer.putFloat(offset + 28, matrix.m31);
+        buffer.putFloat(offset + 32, matrix.m02);
+        buffer.putFloat(offset + 36, matrix.m12);
+        buffer.putFloat(offset + 40, matrix.m22);
+        buffer.putFloat(offset + 44, matrix.m32);
+        buffer.putFloat(offset + 48, matrix.m03);
+        buffer.putFloat(offset + 52, matrix.m13);
+        buffer.putFloat(offset + 56, matrix.m23);
+        buffer.putFloat(offset + 60, matrix.m33);
     }
 }

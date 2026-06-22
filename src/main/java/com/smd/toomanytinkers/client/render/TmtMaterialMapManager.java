@@ -1,7 +1,9 @@
 package com.smd.toomanytinkers.client.render;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.client.renderer.texture.AbstractTexture;
+import net.minecraft.client.renderer.texture.TextureUtil;
+import net.minecraft.client.resources.IResourceManager;
 import net.minecraft.util.ResourceLocation;
 import slimeknights.tconstruct.library.materials.Material;
 
@@ -11,62 +13,69 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public final class TmtMaterialMapManager {
 
-    public static final int WIDTH = 256;
     public static final int UNIT_SIZE = 256;
     public static final int SOURCE_TILE_SIZE = 16;
 
-    private static final String DYNAMIC_NAME = "tmt_material_map";
+    private static final int RAMPS_PER_UNIT = UNIT_SIZE;
+    private static final int SOURCE_TILES_PER_AXIS = UNIT_SIZE / SOURCE_TILE_SIZE;
+    private static final int SOURCE_TILES_PER_UNIT = SOURCE_TILES_PER_AXIS * SOURCE_TILES_PER_AXIS;
+    private static final ResourceLocation TEXTURE_LOCATION =
+            new ResourceLocation("toomanytinkers", "dynamic/material_map");
 
-    private static int expectedMaterials;
-    private static int solidRows;
-    private static final List<Integer> solidPixels = new ArrayList<>();
-    private static final List<int[]> rampRows = new ArrayList<>();
-    private static final List<int[]> textureUnits = new ArrayList<>();
+    private static final List<MaterialEntry> MATERIALS = new ArrayList<>();
+    private static final Map<ResourceLocation, Integer> SOURCE_TILES = new LinkedHashMap<>();
 
-    private static int[] pixels = new int[WIDTH];
-    private static int height = 1;
-    private static int textureBaseY;
-    private static DynamicTexture texture;
+    private static int unitColumns = 1;
+    private static int unitRows = 1;
+    private static int width = UNIT_SIZE;
+    private static int height = UNIT_SIZE;
+    private static int sourceUnitBase = 1;
+    private static int slotCount;
+    private static UploadedMaterialTexture texture;
     private static ResourceLocation textureLocation;
     private static boolean dirty = true;
 
     private TmtMaterialMapManager() {
     }
 
-    public static void rebuildStart(int expectedMaterialCount) {
-        expectedMaterials = Math.max(1, expectedMaterialCount);
-        solidRows = Math.max(1, (expectedMaterials + WIDTH - 1) / WIDTH);
-        solidPixels.clear();
-        rampRows.clear();
-        textureUnits.clear();
-        pixels = new int[WIDTH * solidRows];
-        java.util.Arrays.fill(pixels, 0xffffffff);
-        height = solidRows;
-        textureBaseY = solidRows;
+    public static void rebuildStart() {
+        MATERIALS.clear();
+        SOURCE_TILES.clear();
+        unitColumns = 1;
+        unitRows = 1;
+        width = UNIT_SIZE;
+        height = UNIT_SIZE;
+        sourceUnitBase = 1;
+        slotCount = 0;
         dirty = true;
     }
 
     public static Allocation addMaterial(Material material, @Nullable ResourceLocation sourceTexture) {
+        int rampIndex = MATERIALS.size();
+        int sourceIndex = -1;
+        int type = MaterialDescriptor.TYPE_RAMP;
         if (sourceTexture != null) {
-            int index = textureUnits.size();
-            textureUnits.add(buildTextureUnit(material, sourceTexture));
-            dirty = true;
-            return new Allocation(MaterialDescriptor.TYPE_TEXTURE, index);
+            type = MaterialDescriptor.TYPE_TEXTURE;
+            Integer existing = SOURCE_TILES.get(sourceTexture);
+            if (existing == null) {
+                existing = SOURCE_TILES.size();
+                SOURCE_TILES.put(sourceTexture, existing);
+            }
+            sourceIndex = existing;
         }
-        if (MaterialColorEvaluator.isSolid(material)) {
-            int index = solidPixels.size();
-            solidPixels.add(MaterialColorEvaluator.evaluate(material, 1f));
-            dirty = true;
-            return new Allocation(MaterialDescriptor.TYPE_SOLID, index);
-        }
-        int index = rampRows.size();
-        rampRows.add(buildRamp(material));
+        MATERIALS.add(new MaterialEntry(material, rampIndex));
         dirty = true;
-        return new Allocation(MaterialDescriptor.TYPE_RAMP, index);
+        return new Allocation(type, rampIndex, sourceIndex);
+    }
+
+    public static void finishUpload() {
+        ensureTexture();
     }
 
     public static ResourceLocation getTextureLocation() {
@@ -74,23 +83,28 @@ public final class TmtMaterialMapManager {
         return textureLocation;
     }
 
+    public static int getWidth() {
+        ensureTexture();
+        return width;
+    }
+
     public static int getHeight() {
         ensureTexture();
         return height;
     }
 
-    public static int getSolidRows() {
+    public static int getUnitColumns() {
         ensureTexture();
-        return solidRows;
+        return unitColumns;
     }
 
-    public static int getTextureBaseY() {
+    public static int getSourceUnitBase() {
         ensureTexture();
-        return textureBaseY;
+        return sourceUnitBase;
     }
 
     public static int getSlotCount() {
-        return solidPixels.size() + rampRows.size() + textureUnits.size();
+        return slotCount;
     }
 
     private static void ensureTexture() {
@@ -98,77 +112,88 @@ public final class TmtMaterialMapManager {
             return;
         }
 
-        composePixels();
-        texture = new DynamicTexture(WIDTH, height);
-        System.arraycopy(pixels, 0, texture.getTextureData(), 0, Math.min(pixels.length, texture.getTextureData().length));
+        planLayout();
+        int[] pixels = new int[width * height];
+        java.util.Arrays.fill(pixels, 0xffffffff);
+        writeRampRows(pixels);
+        writeSourceTiles(pixels);
+
+        UploadedMaterialTexture uploaded = new UploadedMaterialTexture(pixels, width, height);
 
         Minecraft mc = Minecraft.getMinecraft();
         if (textureLocation != null) {
             mc.getTextureManager().deleteTexture(textureLocation);
         }
-        textureLocation = mc.getTextureManager().getDynamicTextureLocation(DYNAMIC_NAME, texture);
-        texture.updateDynamicTexture();
+        texture = uploaded;
+        textureLocation = TEXTURE_LOCATION;
+        mc.getTextureManager().loadTexture(textureLocation, texture);
         dirty = false;
     }
 
-    private static void composePixels() {
-        int rampBaseY = solidRows;
-        textureBaseY = rampBaseY + rampRows.size();
-        height = Math.max(1, textureBaseY + textureUnits.size() * UNIT_SIZE);
-        pixels = new int[WIDTH * height];
-        java.util.Arrays.fill(pixels, 0xffffffff);
+    private static void planLayout() {
+        int rampUnits = Math.max(1, divCeil(MATERIALS.size(), RAMPS_PER_UNIT));
+        int sourceUnits = divCeil(SOURCE_TILES.size(), SOURCE_TILES_PER_UNIT);
+        sourceUnitBase = rampUnits;
+        int totalUnits = Math.max(1, rampUnits + sourceUnits);
+        int size = 1;
+        int sqrtCeil = (int) Math.ceil(Math.sqrt(totalUnits));
+        while (size < sqrtCeil) {
+            size <<= 1;
+        }
+        if ((size * size) / 2 >= totalUnits) {
+            unitColumns = Math.max(1, size / 2);
+            unitRows = size;
+        } else {
+            unitColumns = size;
+            unitRows = size;
+        }
+        width = unitColumns * UNIT_SIZE;
+        height = unitRows * UNIT_SIZE;
+        slotCount = MATERIALS.size() + SOURCE_TILES.size();
+    }
 
-        for (int i = 0; i < solidPixels.size(); i++) {
-            pixels[i] = solidPixels.get(i);
-        }
-        for (int i = 0; i < rampRows.size(); i++) {
-            System.arraycopy(rampRows.get(i), 0, pixels, (rampBaseY + i) * WIDTH, WIDTH);
-        }
-        for (int i = 0; i < textureUnits.size(); i++) {
-            System.arraycopy(textureUnits.get(i), 0, pixels, (textureBaseY + i * UNIT_SIZE) * WIDTH, WIDTH * UNIT_SIZE);
+    private static void writeRampRows(int[] pixels) {
+        for (MaterialEntry entry : MATERIALS) {
+            int unit = entry.rampIndex / RAMPS_PER_UNIT;
+            int row = entry.rampIndex % RAMPS_PER_UNIT;
+            int origin = pixelIndex(unit, 0, row);
+            for (int gray = 0; gray < UNIT_SIZE; gray++) {
+                pixels[origin + gray] = MaterialColorEvaluator.evaluate(entry.material, gray / 255f);
+            }
         }
     }
 
-    private static int[] buildRamp(Material material) {
-        int[] row = new int[WIDTH];
-        for (int gray = 0; gray < WIDTH; gray++) {
-            row[gray] = MaterialColorEvaluator.evaluate(material, gray / 255f);
-        }
-        return row;
-    }
+    private static void writeSourceTiles(int[] pixels) {
+        for (Map.Entry<ResourceLocation, Integer> sourceEntry : SOURCE_TILES.entrySet()) {
+            BufferedImage source = readTexture(sourceEntry.getKey());
+            int sourceIndex = sourceEntry.getValue();
+            int unit = sourceUnitBase + sourceIndex / SOURCE_TILES_PER_UNIT;
+            int local = sourceIndex % SOURCE_TILES_PER_UNIT;
+            int tileX = (local % SOURCE_TILES_PER_AXIS) * SOURCE_TILE_SIZE;
+            int tileY = (local / SOURCE_TILES_PER_AXIS) * SOURCE_TILE_SIZE;
 
-    private static int[] buildTextureUnit(Material material, ResourceLocation sourceTexture) {
-        int[] unit = new int[WIDTH * UNIT_SIZE];
-        BufferedImage source = readTexture(sourceTexture);
-        for (int gray = 0; gray < WIDTH; gray++) {
-            int rampColor = MaterialColorEvaluator.evaluate(material, gray / 255f);
-            int tileX = (gray / SOURCE_TILE_SIZE) * SOURCE_TILE_SIZE;
-            int tileY = (gray % SOURCE_TILE_SIZE) * SOURCE_TILE_SIZE;
             for (int y = 0; y < SOURCE_TILE_SIZE; y++) {
                 for (int x = 0; x < SOURCE_TILE_SIZE; x++) {
-                    int sourceColor = 0xffffffff;
+                    int color = 0xffffffff;
                     if (source != null) {
                         int sourceX = sampleCoord(x, SOURCE_TILE_SIZE, source.getWidth());
                         int sourceY = sampleCoord(y, SOURCE_TILE_SIZE, source.getHeight());
-                        sourceColor = source.getRGB(sourceX, sourceY);
+                        color = source.getRGB(sourceX, sourceY);
                     }
-                    unit[(tileY + y) * WIDTH + tileX + x] = multiply(rampColor, sourceColor);
+                    pixels[pixelIndex(unit, tileX + x, tileY + y)] = color;
                 }
             }
         }
-        return unit;
     }
 
-    private static int multiply(int first, int second) {
-        int a = channel(first, 24) * channel(second, 24) / 255;
-        int r = channel(first, 16) * channel(second, 16) / 255;
-        int g = channel(first, 8) * channel(second, 8) / 255;
-        int b = channel(first, 0) * channel(second, 0) / 255;
-        return (a << 24) | (r << 16) | (g << 8) | b;
+    private static int pixelIndex(int unit, int localX, int localY) {
+        int unitX = unit % unitColumns;
+        int unitY = unit / unitColumns;
+        return (unitY * UNIT_SIZE + localY) * width + unitX * UNIT_SIZE + localX;
     }
 
-    private static int channel(int argb, int shift) {
-        return (argb >>> shift) & 0xff;
+    private static int divCeil(int value, int divisor) {
+        return value == 0 ? 0 : (value + divisor - 1) / divisor;
     }
 
     @Nullable
@@ -199,13 +224,48 @@ public final class TmtMaterialMapManager {
         return Math.min(targetSize - 1, Math.max(0, (int) ((value + 0.5f) * targetSize / sourceSize)));
     }
 
+    private static final class MaterialEntry {
+        private final Material material;
+        private final int rampIndex;
+
+        private MaterialEntry(Material material, int rampIndex) {
+            this.material = material;
+            this.rampIndex = rampIndex;
+        }
+    }
+
+    private static final class UploadedMaterialTexture extends AbstractTexture {
+        @Nullable
+        private int[] pendingPixels;
+        private final int width;
+        private final int height;
+
+        private UploadedMaterialTexture(int[] pixels, int width, int height) {
+            this.pendingPixels = pixels;
+            this.width = width;
+            this.height = height;
+        }
+
+        @Override
+        public void loadTexture(IResourceManager resourceManager) {
+            if (pendingPixels != null) {
+                int textureId = getGlTextureId();
+                TextureUtil.allocateTexture(textureId, width, height);
+                TextureUtil.uploadTexture(textureId, pendingPixels, width, height);
+                pendingPixels = null;
+            }
+        }
+    }
+
     public static final class Allocation {
         private final int type;
         private final int index;
+        private final int sourceIndex;
 
-        private Allocation(int type, int index) {
+        private Allocation(int type, int index, int sourceIndex) {
             this.type = type;
             this.index = index;
+            this.sourceIndex = sourceIndex;
         }
 
         public int getType() {
@@ -214,6 +274,10 @@ public final class TmtMaterialMapManager {
 
         public int getIndex() {
             return index;
+        }
+
+        public int getSourceIndex() {
+            return sourceIndex;
         }
     }
 }

@@ -13,12 +13,18 @@ public final class TmtPartDefinition {
     private final int offsetX;
     private final int offsetY;
     private final float rotationDegrees;
+    private final float zBias;
 
     public TmtPartDefinition(Collection<ResourceLocation> textures, int offsetX, int offsetY, float rotationDegrees) {
+        this(textures, offsetX, offsetY, rotationDegrees, 0f);
+    }
+
+    private TmtPartDefinition(Collection<ResourceLocation> textures, int offsetX, int offsetY, float rotationDegrees, float zBias) {
         this.textures = ImmutableList.copyOf(textures);
         this.offsetX = offsetX;
         this.offsetY = offsetY;
         this.rotationDegrees = rotationDegrees;
+        this.zBias = zBias;
     }
 
     public static TmtPartDefinition fromMaterialModel(MaterialModel model, float rotationDegrees) {
@@ -32,7 +38,7 @@ public final class TmtPartDefinition {
     }
 
     public static TmtPartDefinition singleTexture(ResourceLocation texture, float zBias) {
-        return new TmtPartDefinition(ImmutableList.of(texture), 0, 0, 0f);
+        return new TmtPartDefinition(ImmutableList.of(texture), 0, 0, 0f, zBias);
     }
 
     public ImmutableList<ResourceLocation> getTextures() {
@@ -49,5 +55,9 @@ public final class TmtPartDefinition {
 
     public float getRotationDegrees() {
         return rotationDegrees;
+    }
+
+    public float getZBias() {
+        return zBias;
     }
 }

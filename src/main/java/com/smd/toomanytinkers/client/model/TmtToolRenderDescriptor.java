@@ -1,6 +1,8 @@
 package com.smd.toomanytinkers.client.model;
 
 import com.google.common.collect.ImmutableList;
+import com.smd.toomanytinkers.client.render.MaterialDescriptor;
+import com.smd.toomanytinkers.client.render.MaterialDescriptorRegistry;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.util.ResourceLocation;
@@ -10,10 +12,14 @@ import slimeknights.tconstruct.library.utils.ToolHelper;
 
 import javax.annotation.Nullable;
 import javax.vecmath.Matrix4f;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 
 public final class TmtToolRenderDescriptor {
+
+    private static final float MODIFIER_Z_BIAS = 1f / 1024f;
 
     public static final class GeometryRef {
         private final ResourceLocation shapeTexture;
@@ -41,21 +47,42 @@ public final class TmtToolRenderDescriptor {
         private final GeometryRef geometry;
         private final TmtPartDefinition definition;
         private final ResourceLocation baseTexture;
+        private final ResourceLocation maskTexture;
         private final String materialId;
+        private final int maskSlot;
+        private final int materialType;
+        private final int materialIndex;
+        private final int sourceIndex;
         private final Matrix4f transform;
         private final int flags;
+        private final boolean[] sideOpaque;
+        private final boolean[] compositeOpaque;
+        private final int sideHash;
+        private final int compositeHash;
 
         private Layer(TmtPartDefinition definition,
                       ResourceLocation baseTexture,
                       @Nullable String materialId,
                       Matrix4f transform,
-                      int flags) {
+                      int flags,
+                      boolean[] sideOpaque,
+                      boolean[] compositeOpaque) {
             this.definition = definition;
             this.baseTexture = baseTexture;
             this.materialId = materialId;
-            this.geometry = GeometryRef.sprite(baseTexture, definition);
+            this.maskTexture = MaterialDescriptorRegistry.resolveMaskTexture(baseTexture, materialId);
+            MaterialDescriptor descriptor = materialId == null ? null : MaterialDescriptorRegistry.get(materialId);
+            this.maskSlot = MaterialDescriptorRegistry.getMaskSlot(maskTexture);
+            this.materialType = descriptor == null ? MaterialDescriptor.TYPE_DIRECT : descriptor.getMaterialType();
+            this.materialIndex = descriptor == null ? 0 : descriptor.getMaterialIndex();
+            this.sourceIndex = descriptor == null ? 0 : descriptor.getSourceIndex();
+            this.flags = descriptor == null ? flags : descriptor.getFlags() | flags;
+            this.geometry = GeometryRef.sprite(maskTexture, definition);
             this.transform = new Matrix4f(transform);
-            this.flags = flags;
+            this.sideOpaque = sideOpaque;
+            this.compositeOpaque = compositeOpaque;
+            this.sideHash = Arrays.hashCode(sideOpaque);
+            this.compositeHash = Arrays.hashCode(compositeOpaque);
         }
 
         public GeometryRef getGeometry() {
@@ -70,9 +97,29 @@ public final class TmtToolRenderDescriptor {
             return baseTexture;
         }
 
+        public ResourceLocation getMaskTexture() {
+            return maskTexture;
+        }
+
         @Nullable
         public String getMaterialId() {
             return materialId;
+        }
+
+        public int getMaskSlot() {
+            return maskSlot;
+        }
+
+        public int getMaterialType() {
+            return materialType;
+        }
+
+        public int getMaterialIndex() {
+            return materialIndex;
+        }
+
+        public int getSourceIndex() {
+            return sourceIndex;
         }
 
         public Matrix4f getTransform() {
@@ -86,6 +133,45 @@ public final class TmtToolRenderDescriptor {
         public int getFlags() {
             return flags;
         }
+
+        public boolean[] getSideOpaque() {
+            return sideOpaque;
+        }
+
+        public boolean[] getCompositeOpaque() {
+            return compositeOpaque;
+        }
+
+        public int getSideHash() {
+            return sideHash;
+        }
+
+        public int getCompositeHash() {
+            return compositeHash;
+        }
+    }
+
+    private static final class LayerInput {
+        private final TmtPartDefinition definition;
+        private final ResourceLocation baseTexture;
+        @Nullable
+        private final String materialId;
+        private final Matrix4f transform;
+        private final int flags;
+        private ResourceLocation maskTexture;
+        private boolean[] opacity;
+
+        private LayerInput(TmtPartDefinition definition,
+                           ResourceLocation baseTexture,
+                           @Nullable String materialId,
+                           Matrix4f transform,
+                           int flags) {
+            this.definition = definition;
+            this.baseTexture = baseTexture;
+            this.materialId = materialId;
+            this.transform = transform;
+            this.flags = flags;
+        }
     }
 
     private final TmtToolDefinition definition;
@@ -97,7 +183,7 @@ public final class TmtToolRenderDescriptor {
     }
 
     public static TmtToolRenderDescriptor create(TmtToolDefinition definition, ItemStack stack) {
-        ImmutableList.Builder<Layer> builder = ImmutableList.builder();
+        List<LayerInput> inputs = new ArrayList<>();
         NBTTagList materials = TagUtil.getBaseMaterialsTagList(stack);
         boolean broken = ToolHelper.isBroken(stack);
 
@@ -106,17 +192,17 @@ public final class TmtToolRenderDescriptor {
             TmtPartDefinition part = broken && definition.getBrokenParts().get(i) != null
                     ? definition.getBrokenParts().get(i)
                     : definition.getParts().get(i);
-            addPartLayers(part, materialId, builder);
+            addPartLayerInputs(part, materialId, inputs);
         }
 
-        addModifierParts(definition, stack, builder);
-        return new TmtToolRenderDescriptor(definition, builder.build());
+        addModifierParts(definition, stack, inputs);
+        return new TmtToolRenderDescriptor(definition, buildLayers(inputs));
     }
 
     public static ImmutableList<Layer> createPartLayers(TmtPartDefinition definition, @Nullable String materialId) {
-        ImmutableList.Builder<Layer> builder = ImmutableList.builder();
-        addPartLayers(definition, materialId, builder);
-        return builder.build();
+        List<LayerInput> inputs = new ArrayList<>();
+        addPartLayerInputs(definition, materialId, inputs);
+        return buildLayers(inputs);
     }
 
     public TmtToolDefinition getDefinition() {
@@ -128,7 +214,7 @@ public final class TmtToolRenderDescriptor {
     }
 
     private static void addModifierParts(TmtToolDefinition definition, ItemStack stack,
-                                         ImmutableList.Builder<Layer> builder) {
+                                         List<LayerInput> output) {
         boolean incognito = false;
         NBTTagList modifiers = TagUtil.getBaseModifiersTagList(stack);
         if (modifiers.toString().contains("incognito")) {
@@ -136,6 +222,7 @@ public final class TmtToolRenderDescriptor {
         }
 
         Map<String, String> modifierTextures = definition.getModifierTextures();
+        int visibleModifierIndex = 0;
         for (int i = 0; i < modifiers.tagCount(); i++) {
             String modId = modifiers.getStringTagAt(i);
             if (incognito && !modId.equals("incognito") && !Arrays.asList(Config.incognitoModBlacklist).contains(modId)) {
@@ -143,19 +230,63 @@ public final class TmtToolRenderDescriptor {
             }
             String texture = modifierTextures.get(modId);
             if (texture != null) {
-                addPartLayers(TmtPartDefinition.singleTexture(new ResourceLocation(texture), 0f), null, builder);
+                float zBias = MODIFIER_Z_BIAS * ++visibleModifierIndex;
+                addPartLayerInputs(TmtPartDefinition.singleTexture(new ResourceLocation(texture), zBias), null, output);
             }
         }
     }
 
-    private static void addPartLayers(TmtPartDefinition definition,
-                                      @Nullable String materialId,
-                                      ImmutableList.Builder<Layer> builder) {
+    private static void addPartLayerInputs(TmtPartDefinition definition,
+                                           @Nullable String materialId,
+                                           List<LayerInput> output) {
         String resolvedMaterial = materialId == null || materialId.isEmpty() ? null : materialId;
         Matrix4f transform = identity();
         for (ResourceLocation texture : definition.getTextures()) {
-            builder.add(new Layer(definition, texture, resolvedMaterial, transform, 0));
+            output.add(new LayerInput(definition, texture, resolvedMaterial, transform, 0));
         }
+    }
+
+    private static ImmutableList<Layer> buildLayers(List<LayerInput> inputs) {
+        if (inputs.isEmpty()) {
+            return ImmutableList.of();
+        }
+
+        boolean[] composite = new boolean[16 * 16];
+        int[] owner = new int[16 * 16];
+        Arrays.fill(owner, -1);
+
+        for (int i = 0; i < inputs.size(); i++) {
+            LayerInput input = inputs.get(i);
+            input.maskTexture = MaterialDescriptorRegistry.resolveMaskTexture(input.baseTexture, input.materialId);
+            input.opacity = MaterialDescriptorRegistry.getOpacity(input.maskTexture);
+            for (int pixel = 0; pixel < input.opacity.length; pixel++) {
+                if (input.opacity[pixel]) {
+                    composite[pixel] = true;
+                    owner[pixel] = i;
+                }
+            }
+        }
+
+        boolean[][] sides = new boolean[inputs.size()][16 * 16];
+        for (int pixel = 0; pixel < owner.length; pixel++) {
+            int layer = owner[pixel];
+            if (layer >= 0) {
+                sides[layer][pixel] = true;
+            }
+        }
+
+        ImmutableList.Builder<Layer> builder = ImmutableList.builder();
+        for (int i = 0; i < inputs.size(); i++) {
+            LayerInput input = inputs.get(i);
+            builder.add(new Layer(input.definition,
+                    input.baseTexture,
+                    input.materialId,
+                    input.transform,
+                    input.flags,
+                    sides[i],
+                    composite));
+        }
+        return builder.build();
     }
 
     private static Matrix4f identity() {

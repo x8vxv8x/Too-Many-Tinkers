@@ -3,22 +3,18 @@ package com.smd.toomanytinkers.client.render;
 import com.smd.toomanytinkers.client.model.TmtGpuItemModel;
 import com.smd.toomanytinkers.client.model.TmtLayeredItemModel;
 import com.smd.toomanytinkers.client.model.TmtToolRenderDescriptor;
+import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.OpenGlHelper;
-import net.minecraft.util.ResourceLocation;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
-import org.lwjgl.opengl.GL31;
-
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import org.lwjgl.opengl.GL43;
 
 public final class TmtGpuToolRenderer {
 
     private static final TmtInstanceBuffer INSTANCE_BUFFER = new TmtInstanceBuffer();
+    private static final TmtIndirectCommandBuffer INDIRECT_BUFFER = new TmtIndirectCommandBuffer();
     private static final ThreadLocal<RenderState> RENDER_STATE = ThreadLocal.withInitial(RenderState::new);
 
     private TmtGpuToolRenderer() {
@@ -33,8 +29,6 @@ public final class TmtGpuToolRenderer {
     }
 
     private static boolean render(TmtGpuItemModel model, boolean centerModel) {
-        bindTextures();
-
         GlStateManager.enableBlend();
         GlStateManager.tryBlendFuncSeparate(
                 GlStateManager.SourceFactor.SRC_ALPHA,
@@ -46,13 +40,16 @@ public final class TmtGpuToolRenderer {
         if (centerModel) {
             GlStateManager.translate(-0.5f, -0.5f, -0.5f);
         }
+        boolean rendered = false;
         try {
             if (model instanceof TmtLayeredItemModel) {
-                renderInstanced((TmtLayeredItemModel) model);
+                rendered = renderInstanced((TmtLayeredItemModel) model);
             }
         } finally {
             GlStateManager.popMatrix();
-            unbindExtraTextures();
+            if (rendered) {
+                unbindExtraTextures();
+            }
         }
         return true;
     }
@@ -65,82 +62,93 @@ public final class TmtGpuToolRenderer {
         OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
     }
 
-    private static void renderInstanced(TmtLayeredItemModel model) {
+    private static boolean renderInstanced(TmtLayeredItemModel model) {
         RenderState state = RENDER_STATE.get();
         state.reset();
-        collect(model, state);
+        collectCounts(model, state);
         if (state.isEmpty()) {
-            return;
+            return false;
         }
+        state.finishCounts();
 
+        bindTextures();
         TmtInstancedPaletteShader.bind();
         try {
-            uploadInstances(state);
-            for (int i = 0; i < state.usedBuckets; i++) {
-                Bucket bucket = state.bucketPool.get(i);
-                bucket.mesh.bind();
-                TmtInstancedPaletteShader.setInstanceBase(bucket.instanceOffset);
-                GL31.glDrawElementsInstanced(GL11.GL_TRIANGLES,
-                        bucket.mesh.getIndexCount(),
-                        GL11.GL_UNSIGNED_INT,
-                        0L,
-                        bucket.layers.size());
-                TmtRenderStats.instancedDrawCall();
-            }
+            uploadInstances(model, state);
+            uploadCommands(state);
+            PartSpriteMeshCache.bindGlobalMesh();
+            GL43.glMultiDrawElementsIndirect(GL11.GL_TRIANGLES,
+                    GL11.GL_UNSIGNED_INT,
+                    0L,
+                    state.commandCount,
+                    TmtIndirectCommandBuffer.getStride());
+            TmtRenderStats.instancedDrawCall();
         } finally {
             GL30.glBindVertexArray(0);
+            TmtIndirectCommandBuffer.unbind();
             TmtInstancedPaletteShader.unbind();
         }
+        return true;
     }
 
-    private static void collect(TmtLayeredItemModel model, RenderState state) {
+    private static void collectCounts(TmtLayeredItemModel model, RenderState state) {
         for (TmtToolRenderDescriptor.Layer layer : model.getLayers()) {
-            addSpriteLayer(layer, state);
-        }
-    }
-
-    private static void addSpriteLayer(TmtToolRenderDescriptor.Layer layer, RenderState state) {
-        ResourceLocation maskTexture = MaterialDescriptorRegistry.resolveMaskTexture(layer.getBaseTexture(), layer.getMaterialId());
-        PartSpriteMeshCache.PartMesh mesh = PartSpriteMeshCache.get(
-                maskTexture,
-                layer.getGeometry().getDefinition());
-        if (mesh == null) {
-            return;
-        }
-
-        state.bucketFor(mesh).layers.add(layer);
-        state.instanceCount++;
-    }
-
-    private static void uploadInstances(RenderState state) {
-        INSTANCE_BUFFER.beginUpload(state.instanceCount);
-        int offset = 0;
-        for (int i = 0; i < state.usedBuckets; i++) {
-            Bucket bucket = state.bucketPool.get(i);
-            bucket.instanceOffset = offset;
-            for (TmtToolRenderDescriptor.Layer layer : bucket.layers) {
-                uploadLayer(layer);
+            PartSpriteMeshCache.PartMesh mesh = meshFor(layer);
+            if (mesh != null) {
+                state.add(mesh);
             }
-            offset += bucket.layers.size();
+        }
+    }
+
+    private static PartSpriteMeshCache.PartMesh meshFor(TmtToolRenderDescriptor.Layer layer) {
+        return PartSpriteMeshCache.get(
+                layer.getMaskTexture(),
+                layer.getGeometry().getDefinition(),
+                layer.getSideOpaque(),
+                layer.getCompositeOpaque(),
+                layer.getSideHash(),
+                layer.getCompositeHash());
+    }
+
+    private static void uploadInstances(TmtLayeredItemModel model, RenderState state) {
+        INSTANCE_BUFFER.beginUpload(state.instanceCount);
+        for (TmtToolRenderDescriptor.Layer layer : model.getLayers()) {
+            PartSpriteMeshCache.PartMesh mesh = meshFor(layer);
+            if (mesh == null) {
+                continue;
+            }
+            int command = state.commandByMeshId.get(mesh.getId());
+            if (command < 0) {
+                continue;
+            }
+            uploadLayerAt(state.nextInstance(command), layer);
         }
         INSTANCE_BUFFER.finishUpload();
     }
 
-    private static void uploadLayer(TmtToolRenderDescriptor.Layer layer) {
-        ResourceLocation baseTexture = layer.getBaseTexture();
-        String materialId = layer.getMaterialId();
-        ResourceLocation maskTexture = MaterialDescriptorRegistry.resolveMaskTexture(baseTexture, materialId);
-        MaterialDescriptor descriptor = materialId == null ? null : MaterialDescriptorRegistry.get(materialId);
-        int maskSlot = MaterialDescriptorRegistry.getMaskSlot(maskTexture);
-        int materialType = descriptor == null ? MaterialDescriptor.TYPE_DIRECT : descriptor.getMaterialType();
-        int materialIndex = descriptor == null ? 0 : descriptor.getMaterialIndex();
-        int flags = descriptor == null ? layer.getFlags() : descriptor.getFlags() | layer.getFlags();
-        INSTANCE_BUFFER.putInstance(
+    private static void uploadLayerAt(int instanceIndex, TmtToolRenderDescriptor.Layer layer) {
+        INSTANCE_BUFFER.putInstanceAt(
+                instanceIndex,
                 layer.getTransformForRender(),
-                maskSlot,
-                materialType,
-                materialIndex,
-                flags);
+                layer.getMaskSlot(),
+                layer.getMaterialType(),
+                layer.getMaterialIndex(),
+                layer.getSourceIndex(),
+                layer.getFlags());
+    }
+
+    private static void uploadCommands(RenderState state) {
+        INDIRECT_BUFFER.begin(state.commandCount);
+        for (int i = 0; i < state.commandCount; i++) {
+            PartSpriteMeshCache.PartMesh mesh = state.meshes[i];
+            INDIRECT_BUFFER.putDraw(i,
+                    mesh.getIndexCount(),
+                    state.instanceCounts[i],
+                    mesh.getFirstIndex(),
+                    mesh.getBaseVertex(),
+                    state.instanceOffsets[i]);
+        }
+        INDIRECT_BUFFER.uploadAndBind();
     }
 
     private static void unbindExtraTextures() {
@@ -151,17 +159,27 @@ public final class TmtGpuToolRenderer {
     }
 
     private static final class RenderState {
-        private final Map<PartSpriteMeshCache.PartMesh, Bucket> buckets = new LinkedHashMap<>();
-        private final List<Bucket> bucketPool = new ArrayList<>();
-        private int usedBuckets;
+        private final Int2IntOpenHashMap commandByMeshId = new Int2IntOpenHashMap();
+        private PartSpriteMeshCache.PartMesh[] meshes = new PartSpriteMeshCache.PartMesh[16];
+        private int[] instanceCounts = new int[16];
+        private int[] instanceOffsets = new int[16];
+        private int[] instanceCursors = new int[16];
+        private int commandCount;
         private int instanceCount;
 
+        private RenderState() {
+            commandByMeshId.defaultReturnValue(-1);
+        }
+
         private void reset() {
-            buckets.clear();
-            for (int i = 0; i < usedBuckets; i++) {
-                bucketPool.get(i).clear();
+            commandByMeshId.clear();
+            for (int i = 0; i < commandCount; i++) {
+                meshes[i] = null;
+                instanceCounts[i] = 0;
+                instanceOffsets[i] = 0;
+                instanceCursors[i] = 0;
             }
-            usedBuckets = 0;
+            commandCount = 0;
             instanceCount = 0;
         }
 
@@ -169,36 +187,51 @@ public final class TmtGpuToolRenderer {
             return instanceCount == 0;
         }
 
-        private Bucket bucketFor(PartSpriteMeshCache.PartMesh mesh) {
-            Bucket bucket = buckets.get(mesh);
-            if (bucket != null) {
-                return bucket;
+        private void add(PartSpriteMeshCache.PartMesh mesh) {
+            int command = commandByMeshId.get(mesh.getId());
+            if (command < 0) {
+                command = commandCount++;
+                ensureCommandCapacity(commandCount);
+                meshes[command] = mesh;
+                commandByMeshId.put(mesh.getId(), command);
             }
-            if (usedBuckets == bucketPool.size()) {
-                bucketPool.add(new Bucket());
-            }
-            bucket = bucketPool.get(usedBuckets++);
-            bucket.reset(mesh);
-            buckets.put(mesh, bucket);
-            return bucket;
-        }
-    }
-
-    private static final class Bucket {
-        private final List<TmtToolRenderDescriptor.Layer> layers = new ArrayList<>();
-        private PartSpriteMeshCache.PartMesh mesh;
-        private int instanceOffset;
-
-        private void reset(PartSpriteMeshCache.PartMesh mesh) {
-            this.mesh = mesh;
-            this.instanceOffset = 0;
-            this.layers.clear();
+            instanceCounts[command]++;
+            instanceCount++;
         }
 
-        private void clear() {
-            mesh = null;
-            instanceOffset = 0;
-            layers.clear();
+        private void finishCounts() {
+            int offset = 0;
+            for (int i = 0; i < commandCount; i++) {
+                instanceOffsets[i] = offset;
+                instanceCursors[i] = offset;
+                offset += instanceCounts[i];
+            }
+        }
+
+        private int nextInstance(int command) {
+            return instanceCursors[command]++;
+        }
+
+        private void ensureCommandCapacity(int required) {
+            if (required <= meshes.length) {
+                return;
+            }
+            int capacity = meshes.length << 1;
+            while (capacity < required) {
+                capacity <<= 1;
+            }
+            PartSpriteMeshCache.PartMesh[] grownMeshes = new PartSpriteMeshCache.PartMesh[capacity];
+            int[] grownCounts = new int[capacity];
+            int[] grownOffsets = new int[capacity];
+            int[] grownCursors = new int[capacity];
+            System.arraycopy(meshes, 0, grownMeshes, 0, meshes.length);
+            System.arraycopy(instanceCounts, 0, grownCounts, 0, instanceCounts.length);
+            System.arraycopy(instanceOffsets, 0, grownOffsets, 0, instanceOffsets.length);
+            System.arraycopy(instanceCursors, 0, grownCursors, 0, instanceCursors.length);
+            meshes = grownMeshes;
+            instanceCounts = grownCounts;
+            instanceOffsets = grownOffsets;
+            instanceCursors = grownCursors;
         }
     }
 }
