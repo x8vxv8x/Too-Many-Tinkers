@@ -2,14 +2,13 @@ package com.smd.toomanytinkers.mixin.client.tconstruct;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.smd.toomanytinkers.client.model.TmtEmptyPartParentModel;
 import com.smd.toomanytinkers.client.model.TmtPartDefinition;
 import com.smd.toomanytinkers.client.model.TmtPartMaterialModel;
-import net.minecraft.client.renderer.block.model.IBakedModel;
 import net.minecraft.client.renderer.block.model.ItemCameraTransforms;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.renderer.vertex.VertexFormat;
 import net.minecraft.util.ResourceLocation;
-import net.minecraftforge.client.model.ItemLayerModel;
 import net.minecraftforge.client.model.ModelStateComposition;
 import net.minecraftforge.client.model.PerspectiveMapWrapper;
 import net.minecraftforge.common.model.IModelState;
@@ -45,9 +44,8 @@ public class MaterialModelMixin {
         }
         ImmutableMap<ItemCameraTransforms.TransformType, TRSRTransformation> transforms =
                 PerspectiveMapWrapper.getTransforms(state);
-        IBakedModel base = new ItemLayerModel(textures).bake(state, format, bakedTextureGetter);
-        String baseTexture = base.getParticleTexture().getIconName();
+        TextureAtlasSprite particle = textures.isEmpty() ? null : bakedTextureGetter.apply(textures.get(0));
         TmtPartDefinition definition = new TmtPartDefinition(textures, offsetX, offsetY, 0f);
-        cir.setReturnValue(new TmtPartMaterialModel(base, definition, transforms, baseTexture, state, format, bakedTextureGetter));
+        cir.setReturnValue(new TmtPartMaterialModel(new TmtEmptyPartParentModel(particle), definition, transforms));
     }
 }

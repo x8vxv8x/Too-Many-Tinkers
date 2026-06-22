@@ -1,8 +1,6 @@
 package com.smd.toomanytinkers.client.render;
 
 import com.smd.toomanytinkers.client.model.TmtPartDefinition;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.client.event.TextureStitchEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -40,11 +38,7 @@ public final class PartSpriteMeshCache {
         if (existing != null) {
             return existing;
         }
-        TextureAtlasSprite sprite = Minecraft.getMinecraft().getTextureMapBlocks().getTextureExtry(texture.toString());
-        if (sprite == null) {
-            sprite = Minecraft.getMinecraft().getTextureMapBlocks().getMissingSprite();
-        }
-        PartMesh mesh = build(key, sprite);
+        PartMesh mesh = build(key, TmtPartMaskMapManager.getOpacity(texture));
         if (mesh != null) {
             MESHES.put(key, mesh);
             TmtRenderStats.setPartMeshes(MESHES.size());
@@ -61,10 +55,9 @@ public final class PartSpriteMeshCache {
     }
 
     @Nullable
-    private static PartMesh build(Key key, TextureAtlasSprite sprite) {
-        int width = Math.max(1, sprite.getIconWidth());
-        int height = Math.max(1, sprite.getIconHeight());
-        boolean[] opaque = readOpacity(sprite, width, height);
+    private static PartMesh build(Key key, boolean[] opaque) {
+        int width = 16;
+        int height = 16;
 
         List<Float> vertices = new ArrayList<>();
         List<Integer> indices = new ArrayList<>();
@@ -161,23 +154,6 @@ public final class PartSpriteMeshCache {
         GL15.glBindBuffer(GL15.GL_ELEMENT_ARRAY_BUFFER, 0);
 
         return new PartMesh(vao, vbo, ebo, indices.size());
-    }
-
-    private static boolean[] readOpacity(TextureAtlasSprite sprite, int width, int height) {
-        boolean[] opaque = new boolean[width * height];
-        int[][] frames = sprite.getFrameTextureData(0);
-        if (frames == null || frames.length == 0 || frames[0] == null) {
-            java.util.Arrays.fill(opaque, true);
-            return opaque;
-        }
-        int[] pixels = frames[0];
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int index = Math.min(pixels.length - 1, y * width + x);
-                opaque[y * width + x] = ((pixels[index] >>> 24) & 0xff) > 16;
-            }
-        }
-        return opaque;
     }
 
     private static boolean isTransparent(boolean[] opaque, int width, int height, int x, int y) {

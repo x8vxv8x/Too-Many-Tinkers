@@ -6,12 +6,19 @@ import javax.annotation.Nullable;
 
 public final class MaterialDescriptor {
 
+    public static final int TYPE_DIRECT = 0;
+    public static final int TYPE_SOLID = 1;
+    public static final int TYPE_RAMP = 2;
+    public static final int TYPE_TEXTURE = 3;
+
     public static final int FLAG_VERTEX_COLOR = 1;
     public static final int FLAG_TEXTURE_SUFFIX = 1 << 1;
     public static final int FLAG_ANIMATED = 1 << 2;
+    public static final int FLAG_SOURCE_TEXTURE = 1 << 3;
 
     private final String materialId;
-    private final int rampRow;
+    private final int materialType;
+    private final int materialIndex;
     private final int animationId;
     private final int flags;
     private final MaterialRenderMode renderMode;
@@ -19,14 +26,16 @@ public final class MaterialDescriptor {
     private final ResourceLocation sourceTexture;
 
     public MaterialDescriptor(String materialId,
-                              int rampRow,
+                              int materialType,
+                              int materialIndex,
                               int animationId,
                               int flags,
                               MaterialRenderMode renderMode,
                               @Nullable String textureSuffix,
                               @Nullable ResourceLocation sourceTexture) {
         this.materialId = materialId;
-        this.rampRow = rampRow;
+        this.materialType = materialType;
+        this.materialIndex = materialIndex;
         this.animationId = animationId;
         this.flags = flags;
         this.renderMode = renderMode;
@@ -39,11 +48,19 @@ public final class MaterialDescriptor {
     }
 
     public int getRampRow() {
-        return rampRow;
+        return materialIndex;
     }
 
-    public int getSourceLayer() {
-        return MaterialSourceTextureManager.getSourceLayer(materialId);
+    public int getMapSlot() {
+        return materialIndex;
+    }
+
+    public int getMaterialType() {
+        return materialType;
+    }
+
+    public int getMaterialIndex() {
+        return materialIndex;
     }
 
     public int getAnimationId() {

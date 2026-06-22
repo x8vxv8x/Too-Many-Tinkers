@@ -79,6 +79,10 @@ public final class TmtToolRenderDescriptor {
             return new Matrix4f(transform);
         }
 
+        public Matrix4f getTransformForRender() {
+            return transform;
+        }
+
         public int getFlags() {
             return flags;
         }

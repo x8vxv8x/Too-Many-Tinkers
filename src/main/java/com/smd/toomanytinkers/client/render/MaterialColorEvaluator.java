@@ -1,95 +1,22 @@
 package com.smd.toomanytinkers.client.render;
 
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.util.ResourceLocation;
-import net.minecraftforge.client.event.TextureStitchEvent;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
-import net.minecraftforge.fml.relauncher.Side;
 import slimeknights.tconstruct.library.TinkerRegistry;
 import slimeknights.tconstruct.library.client.MaterialRenderInfo;
 import slimeknights.tconstruct.library.materials.Material;
 
 import java.lang.reflect.Field;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
-public final class MaterialLutManager {
+final class MaterialColorEvaluator {
 
-    private static final int WIDTH = 256;
-    private static final String DYNAMIC_NAME = "tmt_material_lut";
-    private static final Map<String, Integer> MATERIAL_ROWS = new HashMap<>();
-
-    private static DynamicTexture texture;
-    private static ResourceLocation textureLocation;
-    private static int height = 1;
-    private static boolean dirty = true;
-
-    private MaterialLutManager() {
+    private MaterialColorEvaluator() {
     }
 
-    public static int getMaterialRow(String materialId) {
-        ensureTexture();
-        Integer row = MATERIAL_ROWS.get(materialId);
-        return row == null ? -1 : row;
+    static int evaluate(String materialId, float gray) {
+        Material material = TinkerRegistry.getMaterial(materialId);
+        return evaluate(material, gray);
     }
 
-    public static int getHeight() {
-        ensureTexture();
-        return height;
-    }
-
-    public static ResourceLocation getTextureLocation() {
-        ensureTexture();
-        return textureLocation;
-    }
-
-    public static void markDirty() {
-        dirty = true;
-    }
-
-    private static void ensureTexture() {
-        if (!dirty && textureLocation != null) {
-            return;
-        }
-
-        MATERIAL_ROWS.clear();
-        List<MaterialDescriptor> descriptors = MaterialDescriptorRegistry.getDescriptors();
-        height = Math.max(1, descriptors.size());
-        texture = new DynamicTexture(WIDTH, height);
-        int[] data = texture.getTextureData();
-
-        for (int row = 0; row < descriptors.size(); row++) {
-            MaterialDescriptor descriptor = descriptors.get(row);
-            Material material = TinkerRegistry.getMaterial(descriptor.getMaterialId());
-            MATERIAL_ROWS.put(descriptor.getMaterialId(), descriptor.getRampRow());
-            fillMaterialRow(data, row, material);
-        }
-        if (descriptors.isEmpty()) {
-            for (int x = 0; x < WIDTH; x++) {
-                data[x] = 0xffffffff;
-            }
-        }
-
-        Minecraft mc = Minecraft.getMinecraft();
-        if (textureLocation != null) {
-            mc.getTextureManager().deleteTexture(textureLocation);
-        }
-        textureLocation = mc.getTextureManager().getDynamicTextureLocation(DYNAMIC_NAME, texture);
-        texture.updateDynamicTexture();
-        dirty = false;
-    }
-
-    private static void fillMaterialRow(int[] data, int row, Material material) {
-        for (int gray = 0; gray < WIDTH; gray++) {
-            float f = gray / 255f;
-            data[row * WIDTH + gray] = evaluateMaterialColor(material, f);
-        }
-    }
-
-    private static int evaluateMaterialColor(Material material, float gray) {
+    static int evaluate(Material material, float gray) {
         MaterialRenderInfo info = material.renderInfo;
         int grayByte = clamp255((int) (gray * 255f));
         if (info != null) {
@@ -102,19 +29,33 @@ public final class MaterialLutManager {
                 return inverse ? inverseColorByGray(color, grayByte) : multiplyColorByGray(color, grayByte);
             }
 
+            if (info.useVertexColoring()) {
+                return multiplyColorByGray(info.getVertexColor(), grayByte);
+            }
+
             int metalColor = readInt(info, "color", Integer.MIN_VALUE);
-            if (metalColor != Integer.MIN_VALUE) {
+            if (metalColor != Integer.MIN_VALUE && info.getClass().getName().contains("Metal")) {
                 float shininess = readFloat(info, "shinyness", 0.35f);
                 float brightness = readFloat(info, "brightness", 0.35f);
                 float hueShift = readFloat(info, "hueshift", 0.08f);
                 return metalColor(metalColor, grayByte, shininess, brightness, hueShift);
             }
-
-            if (info.useVertexColoring()) {
-                return multiplyColorByGray(info.getVertexColor(), grayByte);
-            }
         }
         return multiplyColorByGray(material.materialTextColor, grayByte);
+    }
+
+    static boolean isSolid(Material material) {
+        MaterialRenderInfo info = material.renderInfo;
+        if (info == null || info.useVertexColoring()) {
+            return true;
+        }
+        if (readInt(info, "low", Integer.MIN_VALUE) != Integer.MIN_VALUE
+                || readInt(info, "mid", Integer.MIN_VALUE) != Integer.MIN_VALUE
+                || readInt(info, "high", Integer.MIN_VALUE) != Integer.MIN_VALUE) {
+            return false;
+        }
+        return readInt(info, "color", Integer.MIN_VALUE) == Integer.MIN_VALUE
+                || !info.getClass().getName().contains("Metal");
     }
 
     private static int multiplyColorByGray(int color, int gray) {
@@ -185,13 +126,5 @@ public final class MaterialLutManager {
             }
         }
         return fallback;
-    }
-
-    @Mod.EventBusSubscriber(modid = "toomanytinkers", value = Side.CLIENT)
-    public static class Events {
-        @SubscribeEvent
-        public static void onTextureStitch(TextureStitchEvent.Post event) {
-            markDirty();
-        }
     }
 }

@@ -6,8 +6,6 @@ import com.smd.toomanytinkers.client.model.TmtToolRenderDescriptor;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.OpenGlHelper;
-import net.minecraft.client.renderer.texture.TextureAtlasSprite;
-import net.minecraft.client.renderer.texture.TextureMap;
 import net.minecraft.util.ResourceLocation;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
@@ -21,6 +19,7 @@ import java.util.Map;
 public final class TmtGpuToolRenderer {
 
     private static final TmtInstanceBuffer INSTANCE_BUFFER = new TmtInstanceBuffer();
+    private static final ThreadLocal<RenderState> RENDER_STATE = ThreadLocal.withInitial(RenderState::new);
 
     private TmtGpuToolRenderer() {
     }
@@ -60,40 +59,32 @@ public final class TmtGpuToolRenderer {
 
     private static void bindTextures() {
         Minecraft mc = Minecraft.getMinecraft();
-        mc.getTextureManager().bindTexture(TextureMap.LOCATION_BLOCKS_TEXTURE);
+        mc.getTextureManager().bindTexture(TmtPartMaskMapManager.getTextureLocation());
         OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit + 1);
-        mc.getTextureManager().bindTexture(MaterialLutManager.getTextureLocation());
-        OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit + 2);
-        mc.getTextureManager().bindTexture(MaterialSourceTextureManager.getTextureLocation());
+        mc.getTextureManager().bindTexture(TmtMaterialMapManager.getTextureLocation());
         OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
     }
 
     private static void renderInstanced(TmtLayeredItemModel model) {
-        RenderBuckets buckets = new RenderBuckets();
-        collect(model, buckets);
-        if (buckets.spriteInstanced.isEmpty()) {
+        RenderState state = RENDER_STATE.get();
+        state.reset();
+        collect(model, state);
+        if (state.isEmpty()) {
             return;
-        }
-
-        List<TmtInstanceBuffer.InstanceData> instances = new ArrayList<>();
-        List<DrawCall> drawCalls = new ArrayList<>();
-        for (Map.Entry<PartSpriteMeshCache.PartMesh, List<TmtInstanceBuffer.InstanceData>> entry : buckets.spriteInstanced.entrySet()) {
-            int offset = instances.size();
-            instances.addAll(entry.getValue());
-            drawCalls.add(new DrawCall(entry.getKey(), offset, entry.getValue().size()));
         }
 
         TmtInstancedPaletteShader.bind();
         try {
-            INSTANCE_BUFFER.upload(instances);
-            for (DrawCall drawCall : drawCalls) {
-                drawCall.mesh.bind();
-                TmtInstancedPaletteShader.setInstanceBase(drawCall.instanceOffset);
+            uploadInstances(state);
+            for (int i = 0; i < state.usedBuckets; i++) {
+                Bucket bucket = state.bucketPool.get(i);
+                bucket.mesh.bind();
+                TmtInstancedPaletteShader.setInstanceBase(bucket.instanceOffset);
                 GL31.glDrawElementsInstanced(GL11.GL_TRIANGLES,
-                        drawCall.mesh.getIndexCount(),
+                        bucket.mesh.getIndexCount(),
                         GL11.GL_UNSIGNED_INT,
                         0L,
-                        drawCall.instanceCount);
+                        bucket.layers.size());
                 TmtRenderStats.instancedDrawCall();
             }
         } finally {
@@ -102,73 +93,112 @@ public final class TmtGpuToolRenderer {
         }
     }
 
-    private static void collect(TmtLayeredItemModel model, RenderBuckets buckets) {
+    private static void collect(TmtLayeredItemModel model, RenderState state) {
         for (TmtToolRenderDescriptor.Layer layer : model.getLayers()) {
-            addSpriteLayer(layer, buckets);
+            addSpriteLayer(layer, state);
         }
     }
 
-    private static void addSpriteLayer(TmtToolRenderDescriptor.Layer layer, RenderBuckets buckets) {
-        ResourceLocation baseTexture = layer.getBaseTexture();
-        String materialId = layer.getMaterialId();
-        ResourceLocation sampleTexture = materialId == null
-                ? baseTexture
-                : MaterialDescriptorRegistry.resolveParamMap(baseTexture, materialId);
-
+    private static void addSpriteLayer(TmtToolRenderDescriptor.Layer layer, RenderState state) {
+        ResourceLocation maskTexture = MaterialDescriptorRegistry.resolveMaskTexture(layer.getBaseTexture(), layer.getMaterialId());
         PartSpriteMeshCache.PartMesh mesh = PartSpriteMeshCache.get(
-                layer.getGeometry().getShapeTexture(),
+                maskTexture,
                 layer.getGeometry().getDefinition());
         if (mesh == null) {
             return;
         }
 
-        TextureAtlasSprite sprite = getSprite(sampleTexture);
-        MaterialDescriptor descriptor = materialId == null ? null : MaterialDescriptorRegistry.get(materialId);
-        int materialRow = descriptor == null ? -1 : descriptor.getRampRow();
-        int sourceLayer = descriptor == null ? -1 : descriptor.getSourceLayer();
-        int flags = descriptor == null ? layer.getFlags() : descriptor.getFlags() | layer.getFlags();
-        buckets.spriteInstanced.computeIfAbsent(mesh, ignored -> new ArrayList<>())
-                .add(new TmtInstanceBuffer.InstanceData(
-                        layer.getTransform(),
-                        sprite.getMinU(),
-                        sprite.getMinV(),
-                        sprite.getMaxU(),
-                        sprite.getMaxV(),
-                        materialRow,
-                        sourceLayer,
-                        flags));
+        state.bucketFor(mesh).layers.add(layer);
+        state.instanceCount++;
     }
 
-    private static TextureAtlasSprite getSprite(ResourceLocation texture) {
-        TextureMap map = Minecraft.getMinecraft().getTextureMapBlocks();
-        TextureAtlasSprite sprite = map.getTextureExtry(texture.toString());
-        return sprite == null ? map.getMissingSprite() : sprite;
+    private static void uploadInstances(RenderState state) {
+        INSTANCE_BUFFER.beginUpload(state.instanceCount);
+        int offset = 0;
+        for (int i = 0; i < state.usedBuckets; i++) {
+            Bucket bucket = state.bucketPool.get(i);
+            bucket.instanceOffset = offset;
+            for (TmtToolRenderDescriptor.Layer layer : bucket.layers) {
+                uploadLayer(layer);
+            }
+            offset += bucket.layers.size();
+        }
+        INSTANCE_BUFFER.finishUpload();
+    }
+
+    private static void uploadLayer(TmtToolRenderDescriptor.Layer layer) {
+        ResourceLocation baseTexture = layer.getBaseTexture();
+        String materialId = layer.getMaterialId();
+        ResourceLocation maskTexture = MaterialDescriptorRegistry.resolveMaskTexture(baseTexture, materialId);
+        MaterialDescriptor descriptor = materialId == null ? null : MaterialDescriptorRegistry.get(materialId);
+        int maskSlot = MaterialDescriptorRegistry.getMaskSlot(maskTexture);
+        int materialType = descriptor == null ? MaterialDescriptor.TYPE_DIRECT : descriptor.getMaterialType();
+        int materialIndex = descriptor == null ? 0 : descriptor.getMaterialIndex();
+        int flags = descriptor == null ? layer.getFlags() : descriptor.getFlags() | layer.getFlags();
+        INSTANCE_BUFFER.putInstance(
+                layer.getTransformForRender(),
+                maskSlot,
+                materialType,
+                materialIndex,
+                flags);
     }
 
     private static void unbindExtraTextures() {
-        Minecraft mc = Minecraft.getMinecraft();
         OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit + 1);
         GlStateManager.bindTexture(0);
-        OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit + 2);
-        GlStateManager.bindTexture(0);
         OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
-        mc.getTextureManager().bindTexture(TextureMap.LOCATION_BLOCKS_TEXTURE);
+        GlStateManager.bindTexture(0);
     }
 
-    private static class RenderBuckets {
-        private final Map<PartSpriteMeshCache.PartMesh, List<TmtInstanceBuffer.InstanceData>> spriteInstanced =
-                new LinkedHashMap<>();
+    private static final class RenderState {
+        private final Map<PartSpriteMeshCache.PartMesh, Bucket> buckets = new LinkedHashMap<>();
+        private final List<Bucket> bucketPool = new ArrayList<>();
+        private int usedBuckets;
+        private int instanceCount;
+
+        private void reset() {
+            buckets.clear();
+            for (int i = 0; i < usedBuckets; i++) {
+                bucketPool.get(i).clear();
+            }
+            usedBuckets = 0;
+            instanceCount = 0;
+        }
+
+        private boolean isEmpty() {
+            return instanceCount == 0;
+        }
+
+        private Bucket bucketFor(PartSpriteMeshCache.PartMesh mesh) {
+            Bucket bucket = buckets.get(mesh);
+            if (bucket != null) {
+                return bucket;
+            }
+            if (usedBuckets == bucketPool.size()) {
+                bucketPool.add(new Bucket());
+            }
+            bucket = bucketPool.get(usedBuckets++);
+            bucket.reset(mesh);
+            buckets.put(mesh, bucket);
+            return bucket;
+        }
     }
 
-    private static final class DrawCall {
-        private final PartSpriteMeshCache.PartMesh mesh;
-        private final int instanceOffset;
-        private final int instanceCount;
+    private static final class Bucket {
+        private final List<TmtToolRenderDescriptor.Layer> layers = new ArrayList<>();
+        private PartSpriteMeshCache.PartMesh mesh;
+        private int instanceOffset;
 
-        private DrawCall(PartSpriteMeshCache.PartMesh mesh, int instanceOffset, int instanceCount) {
+        private void reset(PartSpriteMeshCache.PartMesh mesh) {
             this.mesh = mesh;
-            this.instanceOffset = instanceOffset;
-            this.instanceCount = instanceCount;
+            this.instanceOffset = 0;
+            this.layers.clear();
+        }
+
+        private void clear() {
+            mesh = null;
+            instanceOffset = 0;
+            layers.clear();
         }
     }
 }

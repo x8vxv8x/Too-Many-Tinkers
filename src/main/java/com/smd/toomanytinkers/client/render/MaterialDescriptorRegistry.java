@@ -2,6 +2,8 @@ package com.smd.toomanytinkers.client.render;
 
 import com.google.common.collect.ImmutableList;
 import com.smd.toomanytinkers.TooManyTinkers;
+import com.smd.toomanytinkers.client.model.TmtGpuToolTemplateModel;
+import com.smd.toomanytinkers.client.model.TmtPartMaterialModel;
 import net.minecraft.client.renderer.texture.TextureMap;
 import net.minecraft.util.ResourceLocation;
 import slimeknights.tconstruct.library.TinkerRegistry;
@@ -10,6 +12,7 @@ import slimeknights.tconstruct.library.client.MaterialRenderInfo;
 import slimeknights.tconstruct.library.materials.Material;
 
 import javax.annotation.Nullable;
+import java.lang.reflect.Field;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -18,7 +21,7 @@ import java.util.Set;
 public final class MaterialDescriptorRegistry {
 
     private static final Map<String, MaterialDescriptor> DESCRIPTORS = new LinkedHashMap<>();
-    private static final Set<ResourceLocation> REGISTERED_PARAM_MAPS = new LinkedHashSet<>();
+    private static final Set<ResourceLocation> REGISTERED_MASKS = new LinkedHashSet<>();
 
     private static int rebuilds;
 
@@ -27,28 +30,29 @@ public final class MaterialDescriptorRegistry {
 
     public static void rebuild(TextureMap map, Set<ResourceLocation> baseTextures) {
         DESCRIPTORS.clear();
-        REGISTERED_PARAM_MAPS.clear();
-        int row = 0;
+        REGISTERED_MASKS.clear();
+        TmtPartMaskMapManager.rebuildStart();
+        TmtMaterialMapManager.rebuildStart(TinkerRegistry.getAllMaterials().size());
         Set<String> suffixes = new LinkedHashSet<>();
         for (Material material : TinkerRegistry.getAllMaterials()) {
-            MaterialDescriptor descriptor = createDescriptor(material, row++);
+            MaterialDescriptor descriptor = createDescriptor(material);
             DESCRIPTORS.put(material.identifier, descriptor);
             if (descriptor.hasTextureSuffix()) {
                 suffixes.add(descriptor.getTextureSuffix());
             }
-            if (descriptor.getSourceTexture() != null) {
-                MaterialSourceTextureManager.registerSource(material.identifier, descriptor.getSourceTexture());
-            }
         }
 
-        int registeredMasks = registerParamMaps(map, baseTextures, suffixes);
+        int registeredMasks = registerMasks(baseTextures, suffixes);
         rebuilds++;
-        TmtRenderStats.setMaterialDescriptorCounts(DESCRIPTORS.size(), registeredMasks, rebuilds);
-        TooManyTinkers.LOGGER.info("TMT material descriptors: materials={}, paramMaps={}, rebuild={}",
-                DESCRIPTORS.size(), registeredMasks, rebuilds);
+        TmtRenderStats.setMaterialDescriptorCounts(DESCRIPTORS.size(),
+                registeredMasks,
+                TmtMaterialMapManager.getSlotCount(),
+                rebuilds);
+        TooManyTinkers.LOGGER.info("TMT material descriptors: materials={}, masks={}, materialSlots={}, rebuild={}",
+                DESCRIPTORS.size(), registeredMasks, TmtMaterialMapManager.getSlotCount(), rebuilds);
 
-        MaterialLutManager.markDirty();
-        MaterialSourceTextureManager.markDirty();
+        TmtGpuToolTemplateModel.invalidateCaches();
+        TmtPartMaterialModel.invalidateCaches();
     }
 
     @Nullable
@@ -66,15 +70,23 @@ public final class MaterialDescriptorRegistry {
     }
 
     public static ResourceLocation resolveParamMap(ResourceLocation baseTexture, String materialId) {
+        return resolveMaskTexture(baseTexture, materialId);
+    }
+
+    public static ResourceLocation resolveMaskTexture(ResourceLocation baseTexture, String materialId) {
         MaterialDescriptor descriptor = get(materialId);
         if (descriptor == null || !descriptor.hasTextureSuffix()) {
             return baseTexture;
         }
         ResourceLocation suffixTexture = new ResourceLocation(baseTexture + "_" + descriptor.getTextureSuffix());
-        return REGISTERED_PARAM_MAPS.contains(suffixTexture) ? suffixTexture : baseTexture;
+        return REGISTERED_MASKS.contains(suffixTexture) ? suffixTexture : baseTexture;
     }
 
-    private static MaterialDescriptor createDescriptor(Material material, int row) {
+    public static int getMaskSlot(ResourceLocation texture) {
+        return TmtPartMaskMapManager.getSlot(texture);
+    }
+
+    private static MaterialDescriptor createDescriptor(Material material) {
         MaterialRenderInfo info = material.renderInfo;
         String suffix = info == null ? null : info.getTextureSuffix();
         int flags = 0;
@@ -84,22 +96,63 @@ public final class MaterialDescriptorRegistry {
         if (suffix != null) {
             flags |= MaterialDescriptor.FLAG_TEXTURE_SUFFIX;
         }
-        ResourceLocation source = null;
+        ResourceLocation source = findSourceTexture(info);
+        if (source != null) {
+            flags |= MaterialDescriptor.FLAG_SOURCE_TEXTURE;
+        }
+        if (source != null && info.getClass().getName().contains("AnimatedTexture")) {
+            flags |= MaterialDescriptor.FLAG_ANIMATED;
+        }
+        TmtMaterialMapManager.Allocation allocation = TmtMaterialMapManager.addMaterial(material, source);
         MaterialRenderMode mode = source == null ? MaterialRenderMode.RAMP : MaterialRenderMode.RAMP_SOURCE;
-        return new MaterialDescriptor(material.identifier, row, -1, flags, mode, suffix, source);
+        return new MaterialDescriptor(material.identifier, allocation.getType(), allocation.getIndex(), -1, flags, mode, suffix, source);
     }
 
-    private static int registerParamMaps(TextureMap map, Set<ResourceLocation> baseTextures, Set<String> suffixes) {
+    @Nullable
+    private static ResourceLocation findSourceTexture(@Nullable MaterialRenderInfo info) {
+        if (info == null) {
+            return null;
+        }
+        Object texturePath = readField(info, "texturePath");
+        if (texturePath instanceof ResourceLocation) {
+            return (ResourceLocation) texturePath;
+        }
+        if (texturePath instanceof String) {
+            return new ResourceLocation((String) texturePath);
+        }
+        Object extraTexture = readField(info, "extraTexture");
+        return extraTexture instanceof ResourceLocation ? (ResourceLocation) extraTexture : null;
+    }
+
+    @Nullable
+    private static Object readField(Object instance, String name) {
+        Class<?> type = instance.getClass();
+        while (type != null) {
+            try {
+                Field field = type.getDeclaredField(name);
+                field.setAccessible(true);
+                return field.get(instance);
+            } catch (ReflectiveOperationException ignored) {
+                type = type.getSuperclass();
+            }
+        }
+        return null;
+    }
+
+    private static int registerMasks(Set<ResourceLocation> baseTextures, Set<String> suffixes) {
         int registered = 0;
         for (ResourceLocation baseTexture : baseTextures) {
             if ("minecraft:missingno".equals(baseTexture.toString())) {
                 continue;
             }
+            TmtPartMaskMapManager.registerMask(baseTexture);
+            REGISTERED_MASKS.add(baseTexture);
+            registered++;
             for (String suffix : suffixes) {
                 ResourceLocation paramMap = new ResourceLocation(baseTexture + "_" + suffix);
                 if (CustomTextureCreator.exists(paramMap.toString())) {
-                    map.registerSprite(paramMap);
-                    REGISTERED_PARAM_MAPS.add(paramMap);
+                    TmtPartMaskMapManager.registerMask(paramMap);
+                    REGISTERED_MASKS.add(paramMap);
                     registered++;
                 }
             }

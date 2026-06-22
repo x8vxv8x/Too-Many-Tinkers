@@ -7,38 +7,49 @@ import org.lwjgl.opengl.GL43;
 
 import javax.vecmath.Matrix4f;
 import java.nio.ByteBuffer;
-import java.util.List;
 
 public final class TmtInstanceBuffer {
 
     private static final int BINDING_POINT = 3;
     private static final int BYTES_PER_INSTANCE = 96;
-    private static final int MATERIAL_BITS = 16;
-    private static final int SOURCE_BITS = 12;
+    private static final int MASK_BITS = 12;
+    private static final int MATERIAL_BITS = 14;
+    private static final int TYPE_BITS = 2;
     private static final int FLAGS_BITS = 4;
-    private static final int MATERIAL_LIMIT = (1 << MATERIAL_BITS) - 2;
-    private static final int SOURCE_LIMIT = (1 << SOURCE_BITS) - 2;
+    private static final int MASK_LIMIT = (1 << MASK_BITS) - 1;
+    private static final int MATERIAL_LIMIT = (1 << MATERIAL_BITS) - 1;
+    private static final int TYPE_LIMIT = (1 << TYPE_BITS) - 1;
     private static final int FLAGS_LIMIT = (1 << FLAGS_BITS) - 1;
 
     private int ssbo;
     private int capacity;
     private ByteBuffer uploadBuffer;
 
-    public int upload(List<InstanceData> instances) {
+    public void beginUpload(int instances) {
         ensureBuffer();
-        ensureCapacity(instances.size());
-        ensureUploadBuffer(instances.size());
-
+        ensureCapacity(instances);
+        ensureUploadBuffer(instances);
         uploadBuffer.clear();
-        for (InstanceData instance : instances) {
-            instance.write(uploadBuffer);
-        }
+    }
+
+    public void putInstance(Matrix4f model,
+                            int maskSlot,
+                            int materialType,
+                            int materialIndex,
+                            int flags) {
+        putMatrix(uploadBuffer, model);
+        uploadBuffer.putFloat(0f).putFloat(0f).putFloat(0f).putFloat(0f);
+        uploadBuffer.putInt(pack(maskSlot, materialType, materialIndex, flags)).putInt(0).putInt(0).putInt(0);
+    }
+
+    public int finishUpload() {
+        int instances = uploadBuffer.position() / BYTES_PER_INSTANCE;
         uploadBuffer.flip();
 
         GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, ssbo);
         GL15.glBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER, 0L, uploadBuffer);
         GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, BINDING_POINT, ssbo);
-        return instances.size();
+        return instances;
     }
 
     private void ensureBuffer() {
@@ -72,56 +83,29 @@ public final class TmtInstanceBuffer {
         return out;
     }
 
-    public static final class InstanceData {
-        private final Matrix4f model;
-        private final float minU;
-        private final float minV;
-        private final float maxU;
-        private final float maxV;
-        private final int packed;
-
-        public InstanceData(Matrix4f model,
-                            float minU,
-                            float minV,
-                            float maxU,
-                            float maxV,
-                            int materialRow,
-                            int sourceLayer,
-                            int flags) {
-            this.model = new Matrix4f(model);
-            this.minU = minU;
-            this.minV = minV;
-            this.maxU = maxU;
-            this.maxV = maxV;
-            this.packed = pack(materialRow, sourceLayer, flags);
+    private static int pack(int maskSlot, int materialType, int materialIndex, int flags) {
+        if (maskSlot < 0 || maskSlot > MASK_LIMIT) {
+            throw new IllegalArgumentException("TMT mask slot exceeds SSBO packing limit: " + maskSlot);
         }
-
-        private static int pack(int materialRow, int sourceLayer, int flags) {
-            if (materialRow > MATERIAL_LIMIT) {
-                throw new IllegalArgumentException("TMT material row exceeds SSBO packing limit: " + materialRow);
-            }
-            if (sourceLayer > SOURCE_LIMIT) {
-                throw new IllegalArgumentException("TMT source layer exceeds SSBO packing limit: " + sourceLayer);
-            }
-            if (flags < 0 || flags > FLAGS_LIMIT) {
-                throw new IllegalArgumentException("TMT material flags exceed SSBO packing limit: " + flags);
-            }
-            int material = materialRow < 0 ? 0 : materialRow + 1;
-            int source = sourceLayer < 0 ? 0 : sourceLayer + 1;
-            return material | (source << MATERIAL_BITS) | (flags << (MATERIAL_BITS + SOURCE_BITS));
+        if (materialType < 0 || materialType > TYPE_LIMIT) {
+            throw new IllegalArgumentException("TMT material type exceeds SSBO packing limit: " + materialType);
         }
-
-        private void write(ByteBuffer buffer) {
-            putMatrix(buffer, model);
-            buffer.putFloat(minU).putFloat(minV).putFloat(maxU).putFloat(maxV);
-            buffer.putInt(packed).putInt(0).putInt(0).putInt(0);
+        if (materialIndex < 0 || materialIndex > MATERIAL_LIMIT) {
+            throw new IllegalArgumentException("TMT material index exceeds SSBO packing limit: " + materialIndex);
         }
-
-        private static void putMatrix(ByteBuffer buffer, Matrix4f matrix) {
-            buffer.putFloat(matrix.m00).putFloat(matrix.m10).putFloat(matrix.m20).putFloat(matrix.m30);
-            buffer.putFloat(matrix.m01).putFloat(matrix.m11).putFloat(matrix.m21).putFloat(matrix.m31);
-            buffer.putFloat(matrix.m02).putFloat(matrix.m12).putFloat(matrix.m22).putFloat(matrix.m32);
-            buffer.putFloat(matrix.m03).putFloat(matrix.m13).putFloat(matrix.m23).putFloat(matrix.m33);
+        if (flags < 0 || flags > FLAGS_LIMIT) {
+            throw new IllegalArgumentException("TMT material flags exceed SSBO packing limit: " + flags);
         }
+        return maskSlot
+                | (materialIndex << MASK_BITS)
+                | (materialType << (MASK_BITS + MATERIAL_BITS))
+                | (flags << (MASK_BITS + MATERIAL_BITS + TYPE_BITS));
+    }
+
+    private static void putMatrix(ByteBuffer buffer, Matrix4f matrix) {
+        buffer.putFloat(matrix.m00).putFloat(matrix.m10).putFloat(matrix.m20).putFloat(matrix.m30);
+        buffer.putFloat(matrix.m01).putFloat(matrix.m11).putFloat(matrix.m21).putFloat(matrix.m31);
+        buffer.putFloat(matrix.m02).putFloat(matrix.m12).putFloat(matrix.m22).putFloat(matrix.m32);
+        buffer.putFloat(matrix.m03).putFloat(matrix.m13).putFloat(matrix.m23).putFloat(matrix.m33);
     }
 }

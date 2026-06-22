@@ -12,52 +12,74 @@ public final class TmtInstancedPaletteShader {
             uniform int uInstanceBase;
             struct InstanceData {
                 mat4 model;
-                vec4 uvRect;
+                vec4 reserved;
                 uvec4 params;
             };
             layout(std430, binding = 3) readonly buffer TmtInstances {
                 InstanceData uInstances[];
             };
             out vec2 vTex;
+            out vec2 vLocalTex;
             flat out uvec4 vParams;
             void main() {
                 InstanceData instance = uInstances[uInstanceBase + gl_InstanceID];
                 gl_Position = gl_ModelViewProjectionMatrix * instance.model * vec4(aPosition, 1.0);
-                vTex = mix(instance.uvRect.xy, instance.uvRect.zw, aTexCoord);
+                vTex = aTexCoord;
+                vLocalTex = aTexCoord;
                 vParams = instance.params;
             }
             """;
 
     private static final String FRAGMENT = """
             #version 430 compatibility
-            uniform sampler2D uAtlas;
-            uniform sampler2D uLut;
-            uniform sampler2D uSource;
-            uniform int uLutHeight;
-            uniform int uSourceHeight;
+            uniform sampler2D uMaskMap;
+            uniform sampler2D uMaterialMap;
+            uniform int uMaskHeight;
+            uniform int uMaterialHeight;
+            uniform int uSolidRows;
+            uniform int uTextureBaseY;
             in vec2 vTex;
+            in vec2 vLocalTex;
             flat in uvec4 vParams;
             out vec4 fragColor;
             void main() {
-                vec4 param = texture(uAtlas, vTex);
-                if (param.a < 0.1) discard;
                 uint layerParams = vParams.x;
-                int materialRow = int(layerParams & 0xffffu) - 1;
-                int sourceLayer = int((layerParams >> 16) & 0xfffu) - 1;
-                if (materialRow < 0) {
-                    fragColor = param;
-                } else {
-                    float x = clamp(param.r, 0.0, 1.0);
-                    float y = (float(materialRow) + 0.5) / float(uLutHeight);
-                    vec4 mapped = texture(uLut, vec2(x, y));
-                    if (sourceLayer >= 0) {
-                        float sx = (clamp(param.g, 0.0, 1.0) * 15.0 + 0.5) / 16.0;
-                        float sy = (float(sourceLayer) * 16.0 + clamp(param.b, 0.0, 1.0) * 15.0 + 0.5) / float(uSourceHeight);
-                        vec4 source = texture(uSource, vec2(sx, sy));
-                        mapped = vec4(mapped.rgb * source.rgb, mapped.a * source.a);
-                    }
-                    fragColor = vec4(mapped.rgb, mapped.a * param.a);
+                int maskSlot = int(layerParams & 0xfffu);
+                int materialIndex = int((layerParams >> 12) & 0x3fffu);
+                int materialType = int((layerParams >> 26) & 0x3u);
+                int flags = int((layerParams >> 28) & 0xfu);
+
+                float maskX = (clamp(vLocalTex.x, 0.0, 1.0) * 15.0 + 0.5) / 16.0;
+                float maskY = (float(maskSlot) * 16.0 + clamp(vLocalTex.y, 0.0, 1.0) * 15.0 + 0.5) / float(uMaskHeight);
+                vec4 mask = texture(uMaskMap, vec2(maskX, maskY));
+                if (mask.a < 0.1) discard;
+
+                if (materialType == 0) {
+                    fragColor = mask;
+                    return;
                 }
+
+                vec4 mapped;
+                if (materialType == 1) {
+                    float solidX = (float(materialIndex % 256) + 0.5) / 256.0;
+                    float solidY = (float(materialIndex / 256) + 0.5) / float(uMaterialHeight);
+                    vec4 solid = texture(uMaterialMap, vec2(solidX, solidY));
+                    mapped = vec4(solid.rgb * mask.r, solid.a);
+                } else if (materialType == 2) {
+                    float rampX = clamp(mask.r, 0.0, 1.0);
+                    float rampY = (float(uSolidRows + materialIndex) + 0.5) / float(uMaterialHeight);
+                    mapped = texture(uMaterialMap, vec2(rampX, rampY));
+                } else {
+                    float grey = clamp(mask.r, 0.0, 1.0) * 255.0;
+                    float greyFloor = floor(grey + 0.5);
+                    float localX = clamp(vLocalTex.x, 0.0, 1.0) * 15.0;
+                    float localY = clamp(vLocalTex.y, 0.0, 1.0) * 15.0;
+                    float sourceX = (floor(greyFloor / 16.0) * 16.0 + localX + 0.5) / 256.0;
+                    float sourceY = (float(uTextureBaseY + materialIndex * 256)
+                            + mod(greyFloor, 16.0) * 16.0 + localY + 0.5) / float(uMaterialHeight);
+                    mapped = texture(uMaterialMap, vec2(sourceX, sourceY));
+                }
+                fragColor = vec4(mapped.rgb, mapped.a * mask.a);
             }
             """;
 
@@ -70,11 +92,12 @@ public final class TmtInstancedPaletteShader {
     public static boolean bind() {
         ensureProgram();
         GL20.glUseProgram(program);
-        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uAtlas"), 0);
-        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uLut"), 1);
-        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uSource"), 2);
-        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uLutHeight"), MaterialLutManager.getHeight());
-        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uSourceHeight"), MaterialSourceTextureManager.getHeight());
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uMaskMap"), 0);
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uMaterialMap"), 1);
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uMaskHeight"), TmtPartMaskMapManager.getHeight());
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uMaterialHeight"), TmtMaterialMapManager.getHeight());
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uSolidRows"), TmtMaterialMapManager.getSolidRows());
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uTextureBaseY"), TmtMaterialMapManager.getTextureBaseY());
         return true;
     }
 

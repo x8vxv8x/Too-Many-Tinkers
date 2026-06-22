@@ -2,38 +2,25 @@ package com.smd.toomanytinkers.client.model;
 
 import com.google.common.collect.ImmutableList;
 import net.minecraft.block.state.IBlockState;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.block.model.BakedQuad;
 import net.minecraft.client.renderer.block.model.IBakedModel;
 import net.minecraft.client.renderer.block.model.ItemCameraTransforms;
 import net.minecraft.client.renderer.block.model.ItemOverrideList;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.util.EnumFacing;
-import net.minecraftforge.client.model.PerspectiveMapWrapper;
-import org.apache.commons.lang3.tuple.Pair;
 
 import javax.annotation.Nullable;
-import javax.vecmath.Matrix4f;
 import java.util.List;
 
-public final class TmtGpuToolStackModel implements TmtLayeredItemModel {
+public final class TmtEmptyPartParentModel implements IBakedModel {
 
     private static final ItemOverrideList NO_OVERRIDES = new ItemOverrideList(ImmutableList.of());
 
-    private final TmtGpuToolTemplateModel template;
-    private final TmtToolRenderDescriptor descriptor;
+    private final TextureAtlasSprite particle;
 
-    public TmtGpuToolStackModel(TmtGpuToolTemplateModel template, TmtToolRenderDescriptor descriptor) {
-        this.template = template;
-        this.descriptor = descriptor;
-    }
-
-    public TmtToolRenderDescriptor getDescriptor() {
-        return descriptor;
-    }
-
-    @Override
-    public ImmutableList<TmtToolRenderDescriptor.Layer> getLayers() {
-        return descriptor.getLayers();
+    public TmtEmptyPartParentModel(@Nullable TextureAtlasSprite particle) {
+        this.particle = particle;
     }
 
     @Override
@@ -43,12 +30,12 @@ public final class TmtGpuToolStackModel implements TmtLayeredItemModel {
 
     @Override
     public boolean isAmbientOcclusion() {
-        return template.isAmbientOcclusion();
+        return false;
     }
 
     @Override
     public boolean isGui3d() {
-        return template.isGui3d();
+        return true;
     }
 
     @Override
@@ -58,16 +45,16 @@ public final class TmtGpuToolStackModel implements TmtLayeredItemModel {
 
     @Override
     public TextureAtlasSprite getParticleTexture() {
-        return template.getParticleTexture();
+        return particle == null ? Minecraft.getMinecraft().getTextureMapBlocks().getMissingSprite() : particle;
+    }
+
+    @Override
+    public ItemCameraTransforms getItemCameraTransforms() {
+        return ItemCameraTransforms.DEFAULT;
     }
 
     @Override
     public ItemOverrideList getOverrides() {
         return NO_OVERRIDES;
-    }
-
-    @Override
-    public Pair<? extends IBakedModel, Matrix4f> handlePerspective(ItemCameraTransforms.TransformType type) {
-        return PerspectiveMapWrapper.handlePerspective(this, descriptor.getDefinition().getTransforms(), type);
     }
 }
