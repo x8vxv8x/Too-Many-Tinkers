@@ -15,7 +15,7 @@ import javax.annotation.Nullable;
 import javax.vecmath.Matrix4f;
 import java.util.List;
 
-public final class TmtGpuToolStackModel implements TmtGpuItemModel {
+public final class TmtGpuToolStackModel implements TmtLayeredItemModel {
 
     private final TmtGpuToolTemplateModel template;
     private final TmtToolRenderDescriptor descriptor;
@@ -27,6 +27,11 @@ public final class TmtGpuToolStackModel implements TmtGpuItemModel {
 
     public TmtToolRenderDescriptor getDescriptor() {
         return descriptor;
+    }
+
+    @Override
+    public ImmutableList<TmtToolRenderDescriptor.Layer> getLayers() {
+        return descriptor.getLayers();
     }
 
     @Override

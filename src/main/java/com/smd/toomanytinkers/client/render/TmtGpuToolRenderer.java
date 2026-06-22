@@ -1,25 +1,15 @@
 package com.smd.toomanytinkers.client.render;
 
 import com.smd.toomanytinkers.client.model.TmtGpuItemModel;
-import com.smd.toomanytinkers.client.model.TmtGpuToolStackModel;
-import com.smd.toomanytinkers.client.model.TmtPartDefinition;
-import com.smd.toomanytinkers.client.model.TmtResolvedPartModel;
-import com.smd.toomanytinkers.client.model.TmtResolvedToolModel;
+import com.smd.toomanytinkers.client.model.TmtLayeredItemModel;
 import com.smd.toomanytinkers.client.model.TmtToolRenderDescriptor;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.BufferBuilder;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.OpenGlHelper;
-import net.minecraft.client.renderer.Tessellator;
-import net.minecraft.client.renderer.block.model.BakedQuad;
-import net.minecraft.client.renderer.block.model.IBakedModel;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.renderer.texture.TextureMap;
-import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
-import net.minecraft.util.EnumFacing;
 import net.minecraft.util.ResourceLocation;
-import net.minecraftforge.client.model.pipeline.LightUtil;
 import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL31;
 
@@ -58,8 +48,8 @@ public final class TmtGpuToolRenderer {
             GlStateManager.translate(-0.5f, -0.5f, -0.5f);
         }
         try {
-            if (!renderInstanced(model)) {
-                renderLegacy(model);
+            if (model instanceof TmtLayeredItemModel) {
+                renderInstanced((TmtLayeredItemModel) model);
             }
         } finally {
             GlStateManager.popMatrix();
@@ -78,112 +68,81 @@ public final class TmtGpuToolRenderer {
         OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
     }
 
-    private static boolean renderInstanced(TmtGpuItemModel model) {
+    private static void renderInstanced(TmtLayeredItemModel model) {
         RenderBuckets buckets = new RenderBuckets();
         collect(model, buckets);
-        if (buckets.hasLegacyModels || (buckets.instanced.isEmpty() && buckets.spriteInstanced.isEmpty())) {
-            return false;
+        if (buckets.spriteInstanced.isEmpty()) {
+            return;
         }
-        if (!TmtInstancedPaletteShader.bind()) {
-            return false;
+
+        List<TmtInstanceBuffer.InstanceData> instances = new ArrayList<>();
+        List<DrawCall> drawCalls = new ArrayList<>();
+        for (Map.Entry<PartSpriteMeshCache.PartMesh, List<TmtInstanceBuffer.InstanceData>> entry : buckets.spriteInstanced.entrySet()) {
+            int offset = instances.size();
+            instances.addAll(entry.getValue());
+            drawCalls.add(new DrawCall(entry.getKey(), offset, entry.getValue().size()));
         }
+
+        TmtInstancedPaletteShader.bind();
         try {
-            for (Map.Entry<PartMeshCache.PartMesh, List<TmtInstanceBuffer.InstanceData>> entry : buckets.instanced.entrySet()) {
-                PartMeshCache.PartMesh mesh = entry.getKey();
-                List<TmtInstanceBuffer.InstanceData> instances = entry.getValue();
-                mesh.bind();
-                int instanceCount = INSTANCE_BUFFER.upload(instances);
-                INSTANCE_BUFFER.bindAttributes();
-                GL31.glDrawElementsInstanced(GL11.GL_TRIANGLES, mesh.getIndexCount(), GL11.GL_UNSIGNED_INT, 0L, instanceCount);
-                TmtRenderStats.instancedDrawCall();
-            }
-            for (Map.Entry<PartSpriteMeshCache.PartMesh, List<TmtInstanceBuffer.InstanceData>> entry : buckets.spriteInstanced.entrySet()) {
-                PartSpriteMeshCache.PartMesh mesh = entry.getKey();
-                List<TmtInstanceBuffer.InstanceData> instances = entry.getValue();
-                mesh.bind();
-                int instanceCount = INSTANCE_BUFFER.upload(instances);
-                INSTANCE_BUFFER.bindAttributes();
-                GL31.glDrawElementsInstanced(GL11.GL_TRIANGLES, mesh.getIndexCount(), GL11.GL_UNSIGNED_INT, 0L, instanceCount);
+            INSTANCE_BUFFER.upload(instances);
+            for (DrawCall drawCall : drawCalls) {
+                drawCall.mesh.bind();
+                TmtInstancedPaletteShader.setInstanceBase(drawCall.instanceOffset);
+                GL31.glDrawElementsInstanced(GL11.GL_TRIANGLES,
+                        drawCall.mesh.getIndexCount(),
+                        GL11.GL_UNSIGNED_INT,
+                        0L,
+                        drawCall.instanceCount);
                 TmtRenderStats.instancedDrawCall();
             }
         } finally {
             GL30.glBindVertexArray(0);
-            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
             TmtInstancedPaletteShader.unbind();
         }
-        return true;
     }
 
-    private static void collect(TmtGpuItemModel model, RenderBuckets buckets) {
-        if (model instanceof TmtResolvedPartModel) {
-            TmtResolvedPartModel part = (TmtResolvedPartModel) model;
-            addInstance(part.getBaseModel(), part.getMaterialId(), buckets);
-        } else if (model instanceof TmtResolvedToolModel) {
-            TmtResolvedToolModel tool = (TmtResolvedToolModel) model;
-            for (TmtResolvedToolModel.PartInstance part : tool.getParts()) {
-                addInstance(part.getBaseModel(), part.getMaterialId(), buckets);
-            }
-            for (IBakedModel vanillaModel : tool.getVanillaModels()) {
-                addInstance(vanillaModel, null, buckets);
-            }
-        } else if (model instanceof TmtGpuToolStackModel) {
-            TmtGpuToolStackModel tool = (TmtGpuToolStackModel) model;
-            for (TmtToolRenderDescriptor.PartInstance part : tool.getDescriptor().getParts()) {
-                addSpritePart(part.getDefinition(), part.getMaterialId(), buckets);
-            }
+    private static void collect(TmtLayeredItemModel model, RenderBuckets buckets) {
+        for (TmtToolRenderDescriptor.Layer layer : model.getLayers()) {
+            addSpriteLayer(layer, buckets);
         }
     }
 
-    private static void addSpritePart(TmtPartDefinition definition, String materialId, RenderBuckets buckets) {
-        for (ResourceLocation baseTexture : definition.getTextures()) {
-            ResourceLocation texture = materialId == null
-                    ? baseTexture
-                    : MaterialDescriptorRegistry.resolveParamMap(baseTexture, materialId);
-            PartSpriteMeshCache.PartMesh mesh = PartSpriteMeshCache.get(texture, definition);
-            if (mesh == null) {
-                continue;
-            }
-            MaterialDescriptor descriptor = materialId == null ? null : MaterialDescriptorRegistry.get(materialId);
-            int materialRow = descriptor == null ? -1 : descriptor.getRampRow();
-            int sourceLayer = descriptor == null ? -1 : descriptor.getSourceLayer();
-            int flags = descriptor == null ? 0 : descriptor.getFlags();
-            buckets.spriteInstanced.computeIfAbsent(mesh, ignored -> new ArrayList<>())
-                    .add(new TmtInstanceBuffer.InstanceData(materialRow, sourceLayer, flags));
-        }
-    }
+    private static void addSpriteLayer(TmtToolRenderDescriptor.Layer layer, RenderBuckets buckets) {
+        ResourceLocation baseTexture = layer.getBaseTexture();
+        String materialId = layer.getMaterialId();
+        ResourceLocation sampleTexture = materialId == null
+                ? baseTexture
+                : MaterialDescriptorRegistry.resolveParamMap(baseTexture, materialId);
 
-    private static void addInstance(IBakedModel model, String materialId, RenderBuckets buckets) {
-        PartMeshCache.PartMesh mesh = PartMeshCache.get(model);
+        PartSpriteMeshCache.PartMesh mesh = PartSpriteMeshCache.get(
+                layer.getGeometry().getShapeTexture(),
+                layer.getGeometry().getDefinition());
         if (mesh == null) {
-            buckets.hasLegacyModels = true;
             return;
         }
+
+        TextureAtlasSprite sprite = getSprite(sampleTexture);
         MaterialDescriptor descriptor = materialId == null ? null : MaterialDescriptorRegistry.get(materialId);
         int materialRow = descriptor == null ? -1 : descriptor.getRampRow();
         int sourceLayer = descriptor == null ? -1 : descriptor.getSourceLayer();
-        int flags = descriptor == null ? 0 : descriptor.getFlags();
-        buckets.instanced.computeIfAbsent(mesh, ignored -> new ArrayList<>())
-                .add(new TmtInstanceBuffer.InstanceData(materialRow, sourceLayer, flags));
+        int flags = descriptor == null ? layer.getFlags() : descriptor.getFlags() | layer.getFlags();
+        buckets.spriteInstanced.computeIfAbsent(mesh, ignored -> new ArrayList<>())
+                .add(new TmtInstanceBuffer.InstanceData(
+                        layer.getTransform(),
+                        sprite.getMinU(),
+                        sprite.getMinV(),
+                        sprite.getMaxU(),
+                        sprite.getMaxV(),
+                        materialRow,
+                        sourceLayer,
+                        flags));
     }
 
-    private static void renderLegacy(TmtGpuItemModel model) {
-        TmtPaletteShader.bind();
-        try {
-            if (model instanceof TmtResolvedPartModel) {
-                TmtResolvedPartModel part = (TmtResolvedPartModel) model;
-                drawModel(part.getBaseModel(), part.getMaterialId());
-            } else if (model instanceof TmtResolvedToolModel) {
-                TmtResolvedToolModel tool = (TmtResolvedToolModel) model;
-                for (TmtResolvedToolModel.PartInstance part : tool.getParts()) {
-                    drawModel(part.getBaseModel(), part.getMaterialId());
-                }
-                for (IBakedModel vanillaModel : tool.getVanillaModels()) {
-                    drawModel(vanillaModel, null);
-                }
-            }
-        } finally {
-            TmtPaletteShader.unbind();
-        }
+    private static TextureAtlasSprite getSprite(ResourceLocation texture) {
+        TextureMap map = Minecraft.getMinecraft().getTextureMapBlocks();
+        TextureAtlasSprite sprite = map.getTextureExtry(texture.toString());
+        return sprite == null ? map.getMissingSprite() : sprite;
     }
 
     private static void unbindExtraTextures() {
@@ -196,33 +155,20 @@ public final class TmtGpuToolRenderer {
         mc.getTextureManager().bindTexture(TextureMap.LOCATION_BLOCKS_TEXTURE);
     }
 
-    private static void drawModel(IBakedModel model, String materialId) {
-        MaterialDescriptor descriptor = materialId == null ? null : MaterialDescriptorRegistry.get(materialId);
-        int materialRow = descriptor == null ? -1 : descriptor.getRampRow();
-        int sourceLayer = descriptor == null ? -1 : descriptor.getSourceLayer();
-        TmtPaletteShader.setMaterial(materialRow, sourceLayer);
-        Tessellator tessellator = Tessellator.getInstance();
-        BufferBuilder buffer = tessellator.getBuffer();
-        buffer.begin(GL11.GL_QUADS, DefaultVertexFormats.ITEM);
-        renderQuads(buffer, model.getQuads(null, null, 0));
-        for (EnumFacing side : EnumFacing.VALUES) {
-            renderQuads(buffer, model.getQuads(null, side, 0));
-        }
-        tessellator.draw();
-        TmtRenderStats.legacyDrawCall();
-    }
-
-    private static void renderQuads(BufferBuilder buffer, List<BakedQuad> quads) {
-        for (BakedQuad quad : quads) {
-            LightUtil.renderQuadColor(buffer, quad, 0xffffffff);
-        }
-    }
-
     private static class RenderBuckets {
-        private final Map<PartMeshCache.PartMesh, List<TmtInstanceBuffer.InstanceData>> instanced =
-                new LinkedHashMap<>();
         private final Map<PartSpriteMeshCache.PartMesh, List<TmtInstanceBuffer.InstanceData>> spriteInstanced =
                 new LinkedHashMap<>();
-        private boolean hasLegacyModels;
+    }
+
+    private static final class DrawCall {
+        private final PartSpriteMeshCache.PartMesh mesh;
+        private final int instanceOffset;
+        private final int instanceCount;
+
+        private DrawCall(PartSpriteMeshCache.PartMesh mesh, int instanceOffset, int instanceCount) {
+            this.mesh = mesh;
+            this.instanceOffset = instanceOffset;
+            this.instanceCount = instanceCount;
+        }
     }
 }

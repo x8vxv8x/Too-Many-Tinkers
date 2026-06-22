@@ -1,44 +1,49 @@
 package com.smd.toomanytinkers.client.render;
 
-import com.smd.toomanytinkers.TooManyTinkers;
 import org.lwjgl.opengl.GL20;
+import org.lwjgl.opengl.GLContext;
 
 public final class TmtInstancedPaletteShader {
 
     private static final String VERTEX = """
-            #version 150 compatibility
+            #version 430 compatibility
             in vec3 aPosition;
             in vec2 aTexCoord;
-            in vec4 iModel0;
-            in vec4 iModel1;
-            in vec4 iModel2;
-            in vec4 iModel3;
-            in vec4 iParams;
+            uniform int uInstanceBase;
+            struct InstanceData {
+                mat4 model;
+                vec4 uvRect;
+                uvec4 params;
+            };
+            layout(std430, binding = 3) readonly buffer TmtInstances {
+                InstanceData uInstances[];
+            };
             out vec2 vTex;
-            flat out vec4 vParams;
+            flat out uvec4 vParams;
             void main() {
-                mat4 model = mat4(iModel0, iModel1, iModel2, iModel3);
-                gl_Position = gl_ModelViewProjectionMatrix * model * vec4(aPosition, 1.0);
-                vTex = aTexCoord;
-                vParams = iParams;
+                InstanceData instance = uInstances[uInstanceBase + gl_InstanceID];
+                gl_Position = gl_ModelViewProjectionMatrix * instance.model * vec4(aPosition, 1.0);
+                vTex = mix(instance.uvRect.xy, instance.uvRect.zw, aTexCoord);
+                vParams = instance.params;
             }
             """;
 
     private static final String FRAGMENT = """
-            #version 150 compatibility
+            #version 430 compatibility
             uniform sampler2D uAtlas;
             uniform sampler2D uLut;
             uniform sampler2D uSource;
             uniform int uLutHeight;
             uniform int uSourceHeight;
             in vec2 vTex;
-            flat in vec4 vParams;
+            flat in uvec4 vParams;
             out vec4 fragColor;
             void main() {
                 vec4 param = texture(uAtlas, vTex);
                 if (param.a < 0.1) discard;
-                int materialRow = int(vParams.x);
-                int sourceLayer = int(vParams.y);
+                uint layerParams = vParams.x;
+                int materialRow = int(layerParams & 0xffffu) - 1;
+                int sourceLayer = int((layerParams >> 16) & 0xfffu) - 1;
                 if (materialRow < 0) {
                     fragColor = param;
                 } else {
@@ -57,29 +62,24 @@ public final class TmtInstancedPaletteShader {
             """;
 
     private static int program;
-    private static boolean disabled;
+    private static int instanceBaseUniform;
 
     private TmtInstancedPaletteShader() {
     }
 
     public static boolean bind() {
-        if (disabled) {
-            return false;
-        }
-        try {
-            ensureProgram();
-            GL20.glUseProgram(program);
-            GL20.glUniform1i(GL20.glGetUniformLocation(program, "uAtlas"), 0);
-            GL20.glUniform1i(GL20.glGetUniformLocation(program, "uLut"), 1);
-            GL20.glUniform1i(GL20.glGetUniformLocation(program, "uSource"), 2);
-            GL20.glUniform1i(GL20.glGetUniformLocation(program, "uLutHeight"), MaterialLutManager.getHeight());
-            GL20.glUniform1i(GL20.glGetUniformLocation(program, "uSourceHeight"), MaterialSourceTextureManager.getHeight());
-            return true;
-        } catch (RuntimeException e) {
-            disabled = true;
-            TooManyTinkers.LOGGER.warn("TMT instanced shader disabled, falling back to legacy GPU path", e);
-            return false;
-        }
+        ensureProgram();
+        GL20.glUseProgram(program);
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uAtlas"), 0);
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uLut"), 1);
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uSource"), 2);
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uLutHeight"), MaterialLutManager.getHeight());
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uSourceHeight"), MaterialSourceTextureManager.getHeight());
+        return true;
+    }
+
+    public static void setInstanceBase(int instanceBase) {
+        GL20.glUniform1i(instanceBaseUniform, instanceBase);
     }
 
     public static void unbind() {
@@ -89,6 +89,9 @@ public final class TmtInstancedPaletteShader {
     private static void ensureProgram() {
         if (program != 0) {
             return;
+        }
+        if (!GLContext.getCapabilities().OpenGL43) {
+            throw new IllegalStateException("TMT GPU renderer requires OpenGL 4.3 / shader storage buffer objects");
         }
         int vertex = compile(GL20.GL_VERTEX_SHADER, VERTEX);
         int fragment = compile(GL20.GL_FRAGMENT_SHADER, FRAGMENT);
@@ -102,16 +105,12 @@ public final class TmtInstancedPaletteShader {
         }
         GL20.glDeleteShader(vertex);
         GL20.glDeleteShader(fragment);
+        instanceBaseUniform = GL20.glGetUniformLocation(program, "uInstanceBase");
     }
 
     private static void bindAttributes(int targetProgram) {
         GL20.glBindAttribLocation(targetProgram, 0, "aPosition");
         GL20.glBindAttribLocation(targetProgram, 1, "aTexCoord");
-        GL20.glBindAttribLocation(targetProgram, 2, "iModel0");
-        GL20.glBindAttribLocation(targetProgram, 3, "iModel1");
-        GL20.glBindAttribLocation(targetProgram, 4, "iModel2");
-        GL20.glBindAttribLocation(targetProgram, 5, "iModel3");
-        GL20.glBindAttribLocation(targetProgram, 6, "iParams");
     }
 
     private static int compile(int type, String source) {

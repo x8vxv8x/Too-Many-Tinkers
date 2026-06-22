@@ -90,24 +90,25 @@ public final class TmtGpuToolTemplateModel implements TmtGpuItemModel {
                                                ItemStack stack,
                                                net.minecraft.world.World world,
                                                net.minecraft.entity.EntityLivingBase entity) {
-            TmtToolDefinition resolved = owner.definition.resolveOverride(stack, world, entity);
-            CacheKey key = new CacheKey(owner, resolved, stack);
+            TmtToolDefinition.Resolved resolved = owner.definition.resolve(stack, world, entity);
+            TmtToolDefinition resolvedDefinition = resolved.getDefinition();
+            CacheKey key = new CacheKey(owner, resolved.getSignature(), stack);
             try {
-                return cache.get(key, () -> new TmtGpuToolStackModel(owner, TmtToolRenderDescriptor.create(resolved, stack)));
+                return cache.get(key, () -> new TmtGpuToolStackModel(owner, TmtToolRenderDescriptor.create(resolvedDefinition, stack)));
             } catch (ExecutionException e) {
-                return new TmtGpuToolStackModel(owner, TmtToolRenderDescriptor.create(resolved, stack));
+                return new TmtGpuToolStackModel(owner, TmtToolRenderDescriptor.create(resolvedDefinition, stack));
             }
         }
     }
 
     private static final class CacheKey {
         private final TmtGpuToolTemplateModel owner;
-        private final TmtToolDefinition definition;
+        private final int overrideSignature;
         private final NBTTagCompound tag;
 
-        private CacheKey(TmtGpuToolTemplateModel owner, TmtToolDefinition definition, ItemStack stack) {
+        private CacheKey(TmtGpuToolTemplateModel owner, int overrideSignature, ItemStack stack) {
             this.owner = owner;
-            this.definition = definition;
+            this.overrideSignature = overrideSignature;
             this.tag = TagUtil.getTagSafe(stack).copy();
         }
 
@@ -120,13 +121,13 @@ public final class TmtGpuToolTemplateModel implements TmtGpuItemModel {
                 return false;
             }
             CacheKey other = (CacheKey) obj;
-            return owner == other.owner && definition == other.definition && tag.equals(other.tag);
+            return owner == other.owner && overrideSignature == other.overrideSignature && tag.equals(other.tag);
         }
 
         @Override
         public int hashCode() {
             int result = System.identityHashCode(owner);
-            result = 31 * result + System.identityHashCode(definition);
+            result = 31 * result + overrideSignature;
             result = 31 * result + tag.hashCode();
             return result;
         }

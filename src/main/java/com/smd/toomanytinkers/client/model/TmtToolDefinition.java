@@ -20,6 +20,7 @@ import slimeknights.tconstruct.library.client.model.format.ToolModelOverride;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +33,25 @@ public final class TmtToolDefinition {
     private final ImmutableMap<ItemCameraTransforms.TransformType, TRSRTransformation> transforms;
     private final ImmutableList<ToolModelOverride> overrides;
     private final AmmoPosition ammoPosition;
+    private final Map<Integer, TmtToolDefinition> resolvedOverrideCache = new HashMap<>();
+
+    public static final class Resolved {
+        private final TmtToolDefinition definition;
+        private final int signature;
+
+        private Resolved(TmtToolDefinition definition, int signature) {
+            this.definition = definition;
+            this.signature = signature;
+        }
+
+        public TmtToolDefinition getDefinition() {
+            return definition;
+        }
+
+        public int getSignature() {
+            return signature;
+        }
+    }
 
     public TmtToolDefinition(List<MaterialModel> partModels,
                              List<MaterialModel> brokenPartModels,
@@ -64,13 +84,32 @@ public final class TmtToolDefinition {
     }
 
     public TmtToolDefinition resolveOverride(ItemStack stack, World world, EntityLivingBase entity) {
-        TmtToolDefinition current = this;
-        for (ToolModelOverride override : overrides) {
+        return resolve(stack, world, entity).getDefinition();
+    }
+
+    public Resolved resolve(ItemStack stack, World world, EntityLivingBase entity) {
+        int signature = 1;
+        List<ToolModelOverride> matched = new ArrayList<>();
+        for (int i = 0; i < overrides.size(); i++) {
+            ToolModelOverride override = overrides.get(i);
             if (matches(override, stack, world, entity)) {
-                current = applyOverride(override);
+                signature = 31 * signature + i + 1;
+                matched.add(override);
             }
         }
-        return current;
+        if (matched.isEmpty()) {
+            return new Resolved(this, 0);
+        }
+        TmtToolDefinition resolved = resolvedOverrideCache.get(signature);
+        if (resolved == null) {
+            TmtToolDefinition current = this;
+            for (ToolModelOverride override : matched) {
+                current = current.applyOverride(override);
+            }
+            resolved = current;
+            resolvedOverrideCache.put(signature, resolved);
+        }
+        return new Resolved(resolved, signature);
     }
 
     public ImmutableList<TmtPartDefinition> getParts() {

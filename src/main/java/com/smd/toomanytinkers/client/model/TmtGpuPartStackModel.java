@@ -17,28 +17,26 @@ import javax.annotation.Nullable;
 import javax.vecmath.Matrix4f;
 import java.util.List;
 
-public class TmtResolvedPartModel implements TmtGpuItemModel {
+public final class TmtGpuPartStackModel implements TmtLayeredItemModel {
 
     private static final ItemOverrideList NO_OVERRIDES = new ItemOverrideList(ImmutableList.of());
 
-    private final IBakedModel baseModel;
+    private final IBakedModel parent;
     private final ImmutableMap<ItemCameraTransforms.TransformType, TRSRTransformation> transforms;
-    private final String materialId;
+    private final ImmutableList<TmtToolRenderDescriptor.Layer> layers;
 
-    public TmtResolvedPartModel(IBakedModel baseModel,
+    public TmtGpuPartStackModel(IBakedModel parent,
                                 ImmutableMap<ItemCameraTransforms.TransformType, TRSRTransformation> transforms,
-                                String materialId) {
-        this.baseModel = baseModel;
+                                TmtPartDefinition definition,
+                                @Nullable String materialId) {
+        this.parent = parent;
         this.transforms = transforms;
-        this.materialId = materialId;
+        this.layers = TmtToolRenderDescriptor.createPartLayers(definition, materialId);
     }
 
-    public IBakedModel getBaseModel() {
-        return baseModel;
-    }
-
-    public String getMaterialId() {
-        return materialId;
+    @Override
+    public ImmutableList<TmtToolRenderDescriptor.Layer> getLayers() {
+        return layers;
     }
 
     @Override
@@ -48,12 +46,12 @@ public class TmtResolvedPartModel implements TmtGpuItemModel {
 
     @Override
     public boolean isAmbientOcclusion() {
-        return baseModel.isAmbientOcclusion();
+        return parent.isAmbientOcclusion();
     }
 
     @Override
     public boolean isGui3d() {
-        return baseModel.isGui3d();
+        return parent.isGui3d();
     }
 
     @Override
@@ -63,7 +61,7 @@ public class TmtResolvedPartModel implements TmtGpuItemModel {
 
     @Override
     public TextureAtlasSprite getParticleTexture() {
-        return baseModel.getParticleTexture();
+        return parent.getParticleTexture();
     }
 
     @Override

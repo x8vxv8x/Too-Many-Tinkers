@@ -1,60 +1,66 @@
 package com.smd.toomanytinkers.client.render;
 
 import org.lwjgl.BufferUtils;
-import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL15;
-import org.lwjgl.opengl.GL20;
-import org.lwjgl.opengl.GL33;
+import org.lwjgl.opengl.GL30;
+import org.lwjgl.opengl.GL43;
 
-import java.nio.FloatBuffer;
+import javax.vecmath.Matrix4f;
+import java.nio.ByteBuffer;
 import java.util.List;
 
 public final class TmtInstanceBuffer {
 
-    private static final int FLOATS_PER_INSTANCE = 20;
-    private static final int BYTES_PER_INSTANCE = FLOATS_PER_INSTANCE * Float.BYTES;
+    private static final int BINDING_POINT = 3;
+    private static final int BYTES_PER_INSTANCE = 96;
+    private static final int MATERIAL_BITS = 16;
+    private static final int SOURCE_BITS = 12;
+    private static final int FLAGS_BITS = 4;
+    private static final int MATERIAL_LIMIT = (1 << MATERIAL_BITS) - 2;
+    private static final int SOURCE_LIMIT = (1 << SOURCE_BITS) - 2;
+    private static final int FLAGS_LIMIT = (1 << FLAGS_BITS) - 1;
 
-    private int vbo;
+    private int ssbo;
     private int capacity;
+    private ByteBuffer uploadBuffer;
 
     public int upload(List<InstanceData> instances) {
         ensureBuffer();
         ensureCapacity(instances.size());
+        ensureUploadBuffer(instances.size());
 
-        FloatBuffer buffer = BufferUtils.createFloatBuffer(instances.size() * FLOATS_PER_INSTANCE);
+        uploadBuffer.clear();
         for (InstanceData instance : instances) {
-            instance.write(buffer);
+            instance.write(uploadBuffer);
         }
-        buffer.flip();
+        uploadBuffer.flip();
 
-        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo);
-        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, Math.max(capacity, instances.size()) * (long) BYTES_PER_INSTANCE, GL15.GL_STREAM_DRAW);
-        GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0L, buffer);
+        GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, ssbo);
+        GL15.glBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER, 0L, uploadBuffer);
+        GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, BINDING_POINT, ssbo);
         return instances.size();
     }
 
-    public void bindAttributes() {
-        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo);
-        for (int i = 0; i < 4; i++) {
-            int index = 2 + i;
-            GL20.glEnableVertexAttribArray(index);
-            GL20.glVertexAttribPointer(index, 4, GL11.GL_FLOAT, false, BYTES_PER_INSTANCE, (long) i * 4L * Float.BYTES);
-            GL33.glVertexAttribDivisor(index, 1);
-        }
-        GL20.glEnableVertexAttribArray(6);
-        GL20.glVertexAttribPointer(6, 4, GL11.GL_FLOAT, false, BYTES_PER_INSTANCE, 16L * Float.BYTES);
-        GL33.glVertexAttribDivisor(6, 1);
-    }
-
     private void ensureBuffer() {
-        if (vbo == 0) {
-            vbo = GL15.glGenBuffers();
+        if (ssbo == 0) {
+            ssbo = GL15.glGenBuffers();
         }
     }
 
     private void ensureCapacity(int instances) {
         if (instances > capacity) {
             capacity = nextPowerOfTwo(instances);
+            GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, ssbo);
+            GL15.glBufferData(GL43.GL_SHADER_STORAGE_BUFFER,
+                    Math.max(1, capacity) * (long) BYTES_PER_INSTANCE,
+                    GL15.GL_STREAM_DRAW);
+        }
+    }
+
+    private void ensureUploadBuffer(int instances) {
+        int bytes = Math.max(1, instances) * BYTES_PER_INSTANCE;
+        if (uploadBuffer == null || uploadBuffer.capacity() < bytes) {
+            uploadBuffer = BufferUtils.createByteBuffer(bytes);
         }
     }
 
@@ -67,22 +73,55 @@ public final class TmtInstanceBuffer {
     }
 
     public static final class InstanceData {
-        private final int materialRow;
-        private final int sourceLayer;
-        private final int flags;
+        private final Matrix4f model;
+        private final float minU;
+        private final float minV;
+        private final float maxU;
+        private final float maxV;
+        private final int packed;
 
-        public InstanceData(int materialRow, int sourceLayer, int flags) {
-            this.materialRow = materialRow;
-            this.sourceLayer = sourceLayer;
-            this.flags = flags;
+        public InstanceData(Matrix4f model,
+                            float minU,
+                            float minV,
+                            float maxU,
+                            float maxV,
+                            int materialRow,
+                            int sourceLayer,
+                            int flags) {
+            this.model = new Matrix4f(model);
+            this.minU = minU;
+            this.minV = minV;
+            this.maxU = maxU;
+            this.maxV = maxV;
+            this.packed = pack(materialRow, sourceLayer, flags);
         }
 
-        private void write(FloatBuffer buffer) {
-            buffer.put(1f).put(0f).put(0f).put(0f);
-            buffer.put(0f).put(1f).put(0f).put(0f);
-            buffer.put(0f).put(0f).put(1f).put(0f);
-            buffer.put(0f).put(0f).put(0f).put(1f);
-            buffer.put(materialRow).put(sourceLayer).put(flags).put(0f);
+        private static int pack(int materialRow, int sourceLayer, int flags) {
+            if (materialRow > MATERIAL_LIMIT) {
+                throw new IllegalArgumentException("TMT material row exceeds SSBO packing limit: " + materialRow);
+            }
+            if (sourceLayer > SOURCE_LIMIT) {
+                throw new IllegalArgumentException("TMT source layer exceeds SSBO packing limit: " + sourceLayer);
+            }
+            if (flags < 0 || flags > FLAGS_LIMIT) {
+                throw new IllegalArgumentException("TMT material flags exceed SSBO packing limit: " + flags);
+            }
+            int material = materialRow < 0 ? 0 : materialRow + 1;
+            int source = sourceLayer < 0 ? 0 : sourceLayer + 1;
+            return material | (source << MATERIAL_BITS) | (flags << (MATERIAL_BITS + SOURCE_BITS));
+        }
+
+        private void write(ByteBuffer buffer) {
+            putMatrix(buffer, model);
+            buffer.putFloat(minU).putFloat(minV).putFloat(maxU).putFloat(maxV);
+            buffer.putInt(packed).putInt(0).putInt(0).putInt(0);
+        }
+
+        private static void putMatrix(ByteBuffer buffer, Matrix4f matrix) {
+            buffer.putFloat(matrix.m00).putFloat(matrix.m10).putFloat(matrix.m20).putFloat(matrix.m30);
+            buffer.putFloat(matrix.m01).putFloat(matrix.m11).putFloat(matrix.m21).putFloat(matrix.m31);
+            buffer.putFloat(matrix.m02).putFloat(matrix.m12).putFloat(matrix.m22).putFloat(matrix.m32);
+            buffer.putFloat(matrix.m03).putFloat(matrix.m13).putFloat(matrix.m23).putFloat(matrix.m33);
         }
     }
 }

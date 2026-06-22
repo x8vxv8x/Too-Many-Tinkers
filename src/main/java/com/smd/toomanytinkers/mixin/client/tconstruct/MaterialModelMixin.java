@@ -2,6 +2,7 @@ package com.smd.toomanytinkers.mixin.client.tconstruct;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.smd.toomanytinkers.client.model.TmtPartDefinition;
 import com.smd.toomanytinkers.client.model.TmtPartMaterialModel;
 import net.minecraft.client.renderer.block.model.IBakedModel;
 import net.minecraft.client.renderer.block.model.ItemCameraTransforms;
@@ -46,6 +47,7 @@ public class MaterialModelMixin {
                 PerspectiveMapWrapper.getTransforms(state);
         IBakedModel base = new ItemLayerModel(textures).bake(state, format, bakedTextureGetter);
         String baseTexture = base.getParticleTexture().getIconName();
-        cir.setReturnValue(new TmtPartMaterialModel(base, transforms, baseTexture, state, format, bakedTextureGetter));
+        TmtPartDefinition definition = new TmtPartDefinition(textures, offsetX, offsetY, 0f);
+        cir.setReturnValue(new TmtPartMaterialModel(base, definition, transforms, baseTexture, state, format, bakedTextureGetter));
     }
 }

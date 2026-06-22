@@ -47,6 +47,7 @@ public final class PartSpriteMeshCache {
         PartMesh mesh = build(key, sprite);
         if (mesh != null) {
             MESHES.put(key, mesh);
+            TmtRenderStats.setPartMeshes(MESHES.size());
         }
         return mesh;
     }
@@ -56,6 +57,7 @@ public final class PartSpriteMeshCache {
             mesh.delete();
         }
         MESHES.clear();
+        TmtRenderStats.setPartMeshes(0);
     }
 
     @Nullable
@@ -68,16 +70,16 @@ public final class PartSpriteMeshCache {
         List<Integer> indices = new ArrayList<>();
 
         addQuad(vertices, indices, key,
-                0f, 0f, FRONT_Z, sprite.getInterpolatedU(0), sprite.getInterpolatedV(16),
-                1f, 0f, FRONT_Z, sprite.getInterpolatedU(16), sprite.getInterpolatedV(16),
-                1f, 1f, FRONT_Z, sprite.getInterpolatedU(16), sprite.getInterpolatedV(0),
-                0f, 1f, FRONT_Z, sprite.getInterpolatedU(0), sprite.getInterpolatedV(0));
+                0f, 0f, FRONT_Z, 0f, 1f,
+                1f, 0f, FRONT_Z, 1f, 1f,
+                1f, 1f, FRONT_Z, 1f, 0f,
+                0f, 1f, FRONT_Z, 0f, 0f);
 
         addQuad(vertices, indices, key,
-                0f, 1f, BACK_Z, sprite.getInterpolatedU(0), sprite.getInterpolatedV(0),
-                1f, 1f, BACK_Z, sprite.getInterpolatedU(16), sprite.getInterpolatedV(0),
-                1f, 0f, BACK_Z, sprite.getInterpolatedU(16), sprite.getInterpolatedV(16),
-                0f, 0f, BACK_Z, sprite.getInterpolatedU(0), sprite.getInterpolatedV(16));
+                0f, 1f, BACK_Z, 0f, 0f,
+                1f, 1f, BACK_Z, 1f, 0f,
+                1f, 0f, BACK_Z, 1f, 1f,
+                0f, 0f, BACK_Z, 0f, 1f);
 
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
@@ -89,12 +91,8 @@ public final class PartSpriteMeshCache {
                 float y0 = 1f - (y + 1) / (float) height;
                 float y1 = 1f - y / (float) height;
 
-                float u0 = sprite.getInterpolatedU(x * 16.0 / width);
-                float u1 = sprite.getInterpolatedU((x + 1) * 16.0 / width);
-                float v0 = sprite.getInterpolatedV((y + 1) * 16.0 / height);
-                float v1 = sprite.getInterpolatedV(y * 16.0 / height);
-                float uc = sprite.getInterpolatedU((x + 0.5) * 16.0 / width);
-                float vc = sprite.getInterpolatedV((y + 0.5) * 16.0 / height);
+                float uc = (x + 0.5f) / width;
+                float vc = (y + 0.5f) / height;
 
                 if (isTransparent(opaque, width, height, x - 1, y)) {
                     addQuad(vertices, indices, key,
