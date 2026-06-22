@@ -33,6 +33,12 @@ public final class MaterialSourceTextureManager {
         dirty = true;
     }
 
+    public static void clearRegisteredSources() {
+        REGISTERED_SOURCES.clear();
+        SOURCE_LAYERS.clear();
+        dirty = true;
+    }
+
     public static int getSourceLayer(String materialId) {
         ensureTexture();
         Integer layer = SOURCE_LAYERS.get(materialId);

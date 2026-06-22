@@ -21,4 +21,13 @@ public class RenderItemMixin {
             ci.cancel();
         }
     }
+
+    @Inject(method = "renderModel(Lnet/minecraft/client/renderer/block/model/IBakedModel;Lnet/minecraft/item/ItemStack;)V",
+            at = @At("HEAD"), cancellable = true)
+    private void tmt$renderPreparedGpuDescriptor(IBakedModel model, ItemStack stack, CallbackInfo ci) {
+        if (model instanceof TmtGpuItemModel) {
+            TmtGpuToolRenderer.renderPreparedModel((TmtGpuItemModel) model);
+            ci.cancel();
+        }
+    }
 }

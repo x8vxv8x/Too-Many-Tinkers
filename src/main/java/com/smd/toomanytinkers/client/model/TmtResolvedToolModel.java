@@ -2,6 +2,8 @@ package com.smd.toomanytinkers.client.model;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.smd.toomanytinkers.client.render.MaterialDescriptor;
+import com.smd.toomanytinkers.client.render.MaterialDescriptorRegistry;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.client.renderer.block.model.BakedQuad;
 import net.minecraft.client.renderer.block.model.IBakedModel;
@@ -22,10 +24,12 @@ public class TmtResolvedToolModel implements TmtGpuItemModel {
     public static class PartInstance {
         private final IBakedModel baseModel;
         private final String materialId;
+        private final MaterialDescriptor materialDescriptor;
 
         public PartInstance(IBakedModel baseModel, String materialId) {
             this.baseModel = baseModel;
             this.materialId = materialId;
+            this.materialDescriptor = MaterialDescriptorRegistry.get(materialId);
         }
 
         public IBakedModel getBaseModel() {
@@ -34,6 +38,10 @@ public class TmtResolvedToolModel implements TmtGpuItemModel {
 
         public String getMaterialId() {
             return materialId;
+        }
+
+        public MaterialDescriptor getMaterialDescriptor() {
+            return materialDescriptor;
         }
     }
 

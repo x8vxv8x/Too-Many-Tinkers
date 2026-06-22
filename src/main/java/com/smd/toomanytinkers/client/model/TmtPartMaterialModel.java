@@ -1,6 +1,7 @@
 package com.smd.toomanytinkers.client.model;
 
 import com.google.common.collect.ImmutableMap;
+import com.smd.toomanytinkers.client.render.MaterialDescriptorRegistry;
 import net.minecraft.client.renderer.block.model.IBakedModel;
 import net.minecraft.client.renderer.block.model.ItemCameraTransforms;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
@@ -9,10 +10,7 @@ import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.client.model.ItemLayerModel;
 import net.minecraftforge.common.model.IModelState;
 import net.minecraftforge.common.model.TRSRTransformation;
-import slimeknights.tconstruct.library.TinkerRegistry;
-import slimeknights.tconstruct.library.client.CustomTextureCreator;
 import slimeknights.tconstruct.library.client.model.BakedMaterialModel;
-import slimeknights.tconstruct.library.materials.Material;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -66,15 +64,12 @@ public class TmtPartMaterialModel extends BakedMaterialModel {
     }
 
     private IBakedModel getGrayMaskModel(String materialId) {
-        Material material = TinkerRegistry.getMaterial(materialId);
-        if (material.renderInfo == null || material.renderInfo.getTextureSuffix() == null) {
+        ResourceLocation paramMap = MaterialDescriptorRegistry.resolveParamMap(new ResourceLocation(baseTexture), materialId);
+        if (paramMap.toString().equals(baseTexture)) {
             return baseModel;
         }
-        String suffixTexture = baseTexture + "_" + material.renderInfo.getTextureSuffix();
-        if (!CustomTextureCreator.exists(suffixTexture)) {
-            return baseModel;
-        }
-        return suffixModels.computeIfAbsent(suffixTexture, texture -> ItemLayerModel.INSTANCE
+        String texture = paramMap.toString();
+        return suffixModels.computeIfAbsent(texture, location -> ItemLayerModel.INSTANCE
                 .retexture(ImmutableMap.of("layer0", texture))
                 .bake(state, format, bakedTextureGetter));
     }

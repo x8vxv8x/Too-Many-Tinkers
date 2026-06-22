@@ -12,7 +12,6 @@ import slimeknights.tconstruct.library.client.MaterialRenderInfo;
 import slimeknights.tconstruct.library.materials.Material;
 
 import java.lang.reflect.Field;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,17 +56,18 @@ public final class MaterialLutManager {
         }
 
         MATERIAL_ROWS.clear();
-        List<Material> materials = new ArrayList<>(TinkerRegistry.getAllMaterials());
-        height = Math.max(1, materials.size());
+        List<MaterialDescriptor> descriptors = MaterialDescriptorRegistry.getDescriptors();
+        height = Math.max(1, descriptors.size());
         texture = new DynamicTexture(WIDTH, height);
         int[] data = texture.getTextureData();
 
-        for (int row = 0; row < materials.size(); row++) {
-            Material material = materials.get(row);
-            MATERIAL_ROWS.put(material.identifier, row);
+        for (int row = 0; row < descriptors.size(); row++) {
+            MaterialDescriptor descriptor = descriptors.get(row);
+            Material material = TinkerRegistry.getMaterial(descriptor.getMaterialId());
+            MATERIAL_ROWS.put(descriptor.getMaterialId(), descriptor.getRampRow());
             fillMaterialRow(data, row, material);
         }
-        if (materials.isEmpty()) {
+        if (descriptors.isEmpty()) {
             for (int x = 0; x < WIDTH; x++) {
                 data[x] = 0xffffffff;
             }
@@ -115,25 +115,6 @@ public final class MaterialLutManager {
             }
         }
         return multiplyColorByGray(material.materialTextColor, grayByte);
-    }
-
-    private static int getRepresentativeColor(Material material) {
-        MaterialRenderInfo info = material.renderInfo;
-        if (info == null) {
-            return material.materialTextColor | 0xff000000;
-        }
-        if (info.useVertexColoring()) {
-            return info.getVertexColor() | 0xff000000;
-        }
-        int color = readInt(info, "color", Integer.MIN_VALUE);
-        if (color != Integer.MIN_VALUE) {
-            return color | 0xff000000;
-        }
-        color = readInt(info, "mid", Integer.MIN_VALUE);
-        if (color != Integer.MIN_VALUE) {
-            return color | 0xff000000;
-        }
-        return material.materialTextColor | 0xff000000;
     }
 
     private static int multiplyColorByGray(int color, int gray) {
