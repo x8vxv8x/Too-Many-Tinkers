@@ -1,7 +1,9 @@
 package com.smd.toomanytinkers.client.render;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.client.renderer.texture.AbstractTexture;
+import net.minecraft.client.renderer.texture.TextureUtil;
+import net.minecraft.client.resources.IResourceManager;
 import net.minecraft.util.ResourceLocation;
 
 import javax.annotation.Nullable;
@@ -15,11 +17,12 @@ import java.util.Map;
 public final class TmtPartMaskMapManager {
 
     private static final int TILE_SIZE = 16;
-    private static final String DYNAMIC_NAME = "tmt_part_mask_map";
+    private static final ResourceLocation TEXTURE_LOCATION =
+            new ResourceLocation("toomanytinkers", "dynamic/part_mask_map");
     private static final ResourceLocation MISSING = new ResourceLocation("minecraft", "missingno");
     private static final Map<ResourceLocation, MaskEntry> MASKS = new LinkedHashMap<>();
 
-    private static DynamicTexture texture;
+    private static UploadedMaskTexture texture;
     private static ResourceLocation textureLocation;
     private static int height = TILE_SIZE;
     private static boolean dirty = true;
@@ -70,8 +73,7 @@ public final class TmtPartMaskMapManager {
         }
 
         height = Math.max(1, MASKS.size()) * TILE_SIZE;
-        texture = new DynamicTexture(TILE_SIZE, height);
-        int[] data = texture.getTextureData();
+        int[] data = new int[TILE_SIZE * height];
         java.util.Arrays.fill(data, 0);
         for (MaskEntry entry : MASKS.values()) {
             int base = entry.slot * TILE_SIZE * TILE_SIZE;
@@ -82,8 +84,9 @@ public final class TmtPartMaskMapManager {
         if (textureLocation != null) {
             mc.getTextureManager().deleteTexture(textureLocation);
         }
-        textureLocation = mc.getTextureManager().getDynamicTextureLocation(DYNAMIC_NAME, texture);
-        texture.updateDynamicTexture();
+        texture = new UploadedMaskTexture(data, TILE_SIZE, height);
+        textureLocation = TEXTURE_LOCATION;
+        mc.getTextureManager().loadTexture(textureLocation, texture);
         dirty = false;
     }
 
@@ -168,6 +171,29 @@ public final class TmtPartMaskMapManager {
             this.slot = slot;
             this.pixels = pixels;
             this.opaque = opaque;
+        }
+    }
+
+    private static final class UploadedMaskTexture extends AbstractTexture {
+        @Nullable
+        private int[] pendingPixels;
+        private final int width;
+        private final int height;
+
+        private UploadedMaskTexture(int[] pixels, int width, int height) {
+            this.pendingPixels = pixels;
+            this.width = width;
+            this.height = height;
+        }
+
+        @Override
+        public void loadTexture(IResourceManager resourceManager) {
+            if (pendingPixels != null) {
+                int textureId = getGlTextureId();
+                TextureUtil.allocateTexture(textureId, width, height);
+                TextureUtil.uploadTexture(textureId, pendingPixels, width, height);
+                pendingPixels = null;
+            }
         }
     }
 }
