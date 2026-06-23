@@ -129,13 +129,13 @@ public final class TmtGpuToolTemplateModel implements TmtGpuItemModel {
             if (cached != null) {
                 TmtRenderStats.descriptorCacheHit();
                 updateCacheStats();
-                return cached;
+                return cached.withRenderContext(stack, world, entity);
             }
             TmtRenderStats.descriptorCacheMiss();
             TmtGpuToolStackModel created = new TmtGpuToolStackModel(owner, TmtToolRenderDescriptor.create(resolvedDefinition, stack));
             cache.put(key, created);
             updateCacheStats();
-            return created;
+            return created.withRenderContext(stack, world, entity);
         }
     }
 

@@ -1,15 +1,29 @@
 package com.smd.toomanytinkers.client.render;
 
 import com.smd.toomanytinkers.client.model.TmtGpuItemModel;
+import com.smd.toomanytinkers.client.model.TmtGpuToolStackModel;
 import com.smd.toomanytinkers.client.model.TmtLayeredItemModel;
 import com.smd.toomanytinkers.client.model.TmtToolRenderDescriptor;
+import com.google.common.collect.ImmutableList;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
+import net.minecraft.client.renderer.block.model.IBakedModel;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.OpenGlHelper;
+import net.minecraft.entity.EntityLivingBase;
+import net.minecraft.item.ItemStack;
+import net.minecraft.world.World;
+import net.minecraftforge.common.model.TRSRTransformation;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL43;
+import slimeknights.tconstruct.library.client.model.format.AmmoPosition;
+import slimeknights.tconstruct.library.tools.IAmmoUser;
+
+import javax.vecmath.Matrix4f;
+import javax.vecmath.Vector3f;
+import java.util.ArrayList;
+import java.util.List;
 
 public final class TmtGpuToolRenderer {
 
@@ -71,9 +85,10 @@ public final class TmtGpuToolRenderer {
     }
 
     private static boolean renderInstanced(TmtLayeredItemModel model, boolean useLightmap) {
+        List<TmtToolRenderDescriptor.Layer> layers = layersForRender(model);
         RenderState state = RENDER_STATE.get();
         state.reset();
-        collectCounts(model, state);
+        collectCounts(layers, state);
         if (state.isEmpty()) {
             return false;
         }
@@ -82,7 +97,7 @@ public final class TmtGpuToolRenderer {
         bindTextures();
         TmtInstancedPaletteShader.bind(useLightmap);
         try {
-            uploadInstances(model, state);
+            uploadInstances(layers, state);
             uploadCommands(state);
             PartSpriteMeshCache.bindGlobalMesh();
             GL43.glMultiDrawElementsIndirect(GL11.GL_TRIANGLES,
@@ -99,8 +114,82 @@ public final class TmtGpuToolRenderer {
         return true;
     }
 
-    private static void collectCounts(TmtLayeredItemModel model, RenderState state) {
-        for (TmtToolRenderDescriptor.Layer layer : model.getLayers()) {
+    private static List<TmtToolRenderDescriptor.Layer> layersForRender(TmtLayeredItemModel model) {
+        ImmutableList<TmtToolRenderDescriptor.Layer> baseLayers = model.getLayers();
+        if (!(model instanceof TmtGpuToolStackModel)) {
+            return baseLayers;
+        }
+
+        List<TmtToolRenderDescriptor.Layer> ammoLayers = ammoLayersFor((TmtGpuToolStackModel) model);
+        if (ammoLayers.isEmpty()) {
+            return baseLayers;
+        }
+
+        List<TmtToolRenderDescriptor.Layer> layers = new ArrayList<>(baseLayers.size() + ammoLayers.size());
+        layers.addAll(baseLayers);
+        layers.addAll(ammoLayers);
+        return layers;
+    }
+
+    private static List<TmtToolRenderDescriptor.Layer> ammoLayersFor(TmtGpuToolStackModel model) {
+        AmmoPosition position = model.getDescriptor().getDefinition().getAmmoPosition();
+        ItemStack stack = model.getRenderStack();
+        EntityLivingBase entity = model.getRenderEntity();
+        if (position == null || stack == null || stack.isEmpty() || entity == null
+                || !(stack.getItem() instanceof IAmmoUser)) {
+            return ImmutableList.of();
+        }
+
+        ItemStack ammo = ((IAmmoUser) stack.getItem()).getAmmoToRender(stack, entity);
+        if (ammo.isEmpty()) {
+            return ImmutableList.of();
+        }
+
+        World world = model.getRenderWorld();
+        if (world == null) {
+            world = entity.getEntityWorld();
+        }
+
+        IBakedModel ammoModel = Minecraft.getMinecraft()
+                .getRenderItem()
+                .getItemModelWithOverrides(ammo, world, entity);
+        if (!(ammoModel instanceof TmtLayeredItemModel)) {
+            return ImmutableList.of();
+        }
+
+        Matrix4f transform = ammoTransform(position);
+        ImmutableList<TmtToolRenderDescriptor.Layer> sourceLayers = ((TmtLayeredItemModel) ammoModel).getLayers();
+        List<TmtToolRenderDescriptor.Layer> transformed = new ArrayList<>(sourceLayers.size());
+        for (TmtToolRenderDescriptor.Layer layer : sourceLayers) {
+            transformed.add(layer.withAdditionalTransform(transform));
+        }
+        return transformed;
+    }
+
+    private static Matrix4f ammoTransform(AmmoPosition position) {
+        TRSRTransformation transform = new TRSRTransformation(
+                new Vector3f(valueAt(position.pos, 0),
+                        valueAt(position.pos, 1),
+                        valueAt(position.pos, 2)),
+                null,
+                new Vector3f(1f, 1f, 1f),
+                TRSRTransformation.quatFromXYZ(
+                        radians(valueAt(position.rot, 0)),
+                        radians(valueAt(position.rot, 1)),
+                        radians(valueAt(position.rot, 2))));
+        return TRSRTransformation.blockCenterToCorner(transform).getMatrix();
+    }
+
+    private static float valueAt(Float[] values, int index) {
+        return values != null && values.length > index && values[index] != null ? values[index] : 0f;
+    }
+
+    private static float radians(float degrees) {
+        return (degrees / 180f) * (float) Math.PI;
+    }
+
+    private static void collectCounts(List<TmtToolRenderDescriptor.Layer> layers, RenderState state) {
+        for (TmtToolRenderDescriptor.Layer layer : layers) {
             PartSpriteMeshCache.PartMesh mesh = meshFor(layer);
             if (mesh != null) {
                 state.add(mesh);
@@ -116,9 +205,9 @@ public final class TmtGpuToolRenderer {
                 layer.getCompositeOpaque());
     }
 
-    private static void uploadInstances(TmtLayeredItemModel model, RenderState state) {
+    private static void uploadInstances(List<TmtToolRenderDescriptor.Layer> layers, RenderState state) {
         INSTANCE_BUFFER.beginUpload(state.instanceCount);
-        for (TmtToolRenderDescriptor.Layer layer : model.getLayers()) {
+        for (TmtToolRenderDescriptor.Layer layer : layers) {
             PartSpriteMeshCache.PartMesh mesh = meshFor(layer);
             if (mesh == null) {
                 continue;

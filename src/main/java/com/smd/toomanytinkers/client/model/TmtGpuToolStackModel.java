@@ -7,7 +7,10 @@ import net.minecraft.client.renderer.block.model.IBakedModel;
 import net.minecraft.client.renderer.block.model.ItemCameraTransforms;
 import net.minecraft.client.renderer.block.model.ItemOverrideList;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.entity.EntityLivingBase;
+import net.minecraft.item.ItemStack;
 import net.minecraft.util.EnumFacing;
+import net.minecraft.world.World;
 import net.minecraftforge.client.model.PerspectiveMapWrapper;
 import org.apache.commons.lang3.tuple.Pair;
 
@@ -21,14 +24,50 @@ public final class TmtGpuToolStackModel implements TmtLayeredItemModel {
 
     private final TmtGpuToolTemplateModel template;
     private final TmtToolRenderDescriptor descriptor;
+    @Nullable
+    private final ItemStack renderStack;
+    @Nullable
+    private final World renderWorld;
+    @Nullable
+    private final EntityLivingBase renderEntity;
 
     public TmtGpuToolStackModel(TmtGpuToolTemplateModel template, TmtToolRenderDescriptor descriptor) {
+        this(template, descriptor, null, null, null);
+    }
+
+    private TmtGpuToolStackModel(TmtGpuToolTemplateModel template,
+                                 TmtToolRenderDescriptor descriptor,
+                                 @Nullable ItemStack renderStack,
+                                 @Nullable World renderWorld,
+                                 @Nullable EntityLivingBase renderEntity) {
         this.template = template;
         this.descriptor = descriptor;
+        this.renderStack = renderStack;
+        this.renderWorld = renderWorld;
+        this.renderEntity = renderEntity;
     }
 
     public TmtToolRenderDescriptor getDescriptor() {
         return descriptor;
+    }
+
+    public TmtGpuToolStackModel withRenderContext(ItemStack stack, @Nullable World world, @Nullable EntityLivingBase entity) {
+        return new TmtGpuToolStackModel(template, descriptor, stack, world, entity);
+    }
+
+    @Nullable
+    public ItemStack getRenderStack() {
+        return renderStack;
+    }
+
+    @Nullable
+    public World getRenderWorld() {
+        return renderWorld;
+    }
+
+    @Nullable
+    public EntityLivingBase getRenderEntity() {
+        return renderEntity;
     }
 
     @Override

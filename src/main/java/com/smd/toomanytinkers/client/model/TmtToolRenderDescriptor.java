@@ -81,6 +81,22 @@ public final class TmtToolRenderDescriptor {
             this.compositeOpaque = compositeOpaque;
         }
 
+        private Layer(Layer source, Matrix4f transform) {
+            this.geometry = source.geometry;
+            this.definition = source.definition;
+            this.baseTexture = source.baseTexture;
+            this.maskTexture = source.maskTexture;
+            this.materialId = source.materialId;
+            this.maskSlot = source.maskSlot;
+            this.materialType = source.materialType;
+            this.materialIndex = source.materialIndex;
+            this.sourceIndex = source.sourceIndex;
+            this.transform = new Matrix4f(transform);
+            this.flags = source.flags;
+            this.sideOpaque = source.sideOpaque;
+            this.compositeOpaque = source.compositeOpaque;
+        }
+
         public GeometryRef getGeometry() {
             return geometry;
         }
@@ -136,6 +152,12 @@ public final class TmtToolRenderDescriptor {
 
         public TmtMaskBits getCompositeOpaque() {
             return compositeOpaque;
+        }
+
+        public Layer withAdditionalTransform(Matrix4f parentTransform) {
+            Matrix4f combined = new Matrix4f();
+            combined.mul(parentTransform, transform);
+            return new Layer(this, combined);
         }
     }
 
