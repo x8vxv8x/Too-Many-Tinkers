@@ -87,7 +87,7 @@ public final class MaterialDescriptorRegistry {
         return TmtPartMaskMapManager.getSlot(texture);
     }
 
-    public static boolean[] getOpacity(ResourceLocation texture) {
+    public static TmtMaskBits getOpacity(ResourceLocation texture) {
         return TmtPartMaskMapManager.getOpacity(texture);
     }
 

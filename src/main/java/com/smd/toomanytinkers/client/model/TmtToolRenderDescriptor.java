@@ -3,6 +3,7 @@ package com.smd.toomanytinkers.client.model;
 import com.google.common.collect.ImmutableList;
 import com.smd.toomanytinkers.client.render.MaterialDescriptor;
 import com.smd.toomanytinkers.client.render.MaterialDescriptorRegistry;
+import com.smd.toomanytinkers.client.render.TmtMaskBits;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.util.ResourceLocation;
@@ -13,7 +14,6 @@ import slimeknights.tconstruct.library.utils.ToolHelper;
 import javax.annotation.Nullable;
 import javax.vecmath.Matrix4f;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -55,18 +55,16 @@ public final class TmtToolRenderDescriptor {
         private final int sourceIndex;
         private final Matrix4f transform;
         private final int flags;
-        private final boolean[] sideOpaque;
-        private final boolean[] compositeOpaque;
-        private final int sideHash;
-        private final int compositeHash;
+        private final TmtMaskBits sideOpaque;
+        private final TmtMaskBits compositeOpaque;
 
         private Layer(TmtPartDefinition definition,
                       ResourceLocation baseTexture,
                       @Nullable String materialId,
                       Matrix4f transform,
                       int flags,
-                      boolean[] sideOpaque,
-                      boolean[] compositeOpaque) {
+                      TmtMaskBits sideOpaque,
+                      TmtMaskBits compositeOpaque) {
             this.definition = definition;
             this.baseTexture = baseTexture;
             this.materialId = materialId;
@@ -81,8 +79,6 @@ public final class TmtToolRenderDescriptor {
             this.transform = new Matrix4f(transform);
             this.sideOpaque = sideOpaque;
             this.compositeOpaque = compositeOpaque;
-            this.sideHash = Arrays.hashCode(sideOpaque);
-            this.compositeHash = Arrays.hashCode(compositeOpaque);
         }
 
         public GeometryRef getGeometry() {
@@ -134,20 +130,12 @@ public final class TmtToolRenderDescriptor {
             return flags;
         }
 
-        public boolean[] getSideOpaque() {
+        public TmtMaskBits getSideOpaque() {
             return sideOpaque;
         }
 
-        public boolean[] getCompositeOpaque() {
+        public TmtMaskBits getCompositeOpaque() {
             return compositeOpaque;
-        }
-
-        public int getSideHash() {
-            return sideHash;
-        }
-
-        public int getCompositeHash() {
-            return compositeHash;
         }
     }
 
@@ -159,7 +147,7 @@ public final class TmtToolRenderDescriptor {
         private final Matrix4f transform;
         private final int flags;
         private ResourceLocation maskTexture;
-        private boolean[] opacity;
+        private TmtMaskBits opacity;
 
         private LayerInput(TmtPartDefinition definition,
                            ResourceLocation baseTexture,
@@ -225,7 +213,7 @@ public final class TmtToolRenderDescriptor {
         int visibleModifierIndex = 0;
         for (int i = 0; i < modifiers.tagCount(); i++) {
             String modId = modifiers.getStringTagAt(i);
-            if (incognito && !modId.equals("incognito") && !Arrays.asList(Config.incognitoModBlacklist).contains(modId)) {
+            if (incognito && !modId.equals("incognito") && !isIncognitoVisible(modId)) {
                 continue;
             }
             String texture = modifierTextures.get(modId);
@@ -251,27 +239,31 @@ public final class TmtToolRenderDescriptor {
             return ImmutableList.of();
         }
 
-        boolean[] composite = new boolean[16 * 16];
+        TmtMaskBits.Builder composite = TmtMaskBits.builder();
         int[] owner = new int[16 * 16];
-        Arrays.fill(owner, -1);
+        java.util.Arrays.fill(owner, -1);
 
         for (int i = 0; i < inputs.size(); i++) {
             LayerInput input = inputs.get(i);
             input.maskTexture = MaterialDescriptorRegistry.resolveMaskTexture(input.baseTexture, input.materialId);
             input.opacity = MaterialDescriptorRegistry.getOpacity(input.maskTexture);
-            for (int pixel = 0; pixel < input.opacity.length; pixel++) {
-                if (input.opacity[pixel]) {
-                    composite[pixel] = true;
+            for (int pixel = 0; pixel < TmtMaskBits.SIZE; pixel++) {
+                if (input.opacity.get(pixel)) {
+                    composite.set(pixel);
                     owner[pixel] = i;
                 }
             }
         }
 
-        boolean[][] sides = new boolean[inputs.size()][16 * 16];
+        TmtMaskBits compositeMask = composite.build();
+        TmtMaskBits.Builder[] sides = new TmtMaskBits.Builder[inputs.size()];
+        for (int i = 0; i < sides.length; i++) {
+            sides[i] = TmtMaskBits.builder();
+        }
         for (int pixel = 0; pixel < owner.length; pixel++) {
             int layer = owner[pixel];
             if (layer >= 0) {
-                sides[layer][pixel] = true;
+                sides[layer].set(pixel);
             }
         }
 
@@ -283,10 +275,19 @@ public final class TmtToolRenderDescriptor {
                     input.materialId,
                     input.transform,
                     input.flags,
-                    sides[i],
-                    composite));
+                    sides[i].build(),
+                    compositeMask));
         }
         return builder.build();
+    }
+
+    private static boolean isIncognitoVisible(String modifier) {
+        for (String allowed : Config.incognitoModBlacklist) {
+            if (allowed.equals(modifier)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Matrix4f identity() {

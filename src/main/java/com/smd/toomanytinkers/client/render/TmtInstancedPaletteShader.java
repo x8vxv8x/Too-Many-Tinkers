@@ -1,5 +1,6 @@
 package com.smd.toomanytinkers.client.render;
 
+import net.minecraft.client.renderer.OpenGlHelper;
 import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GLContext;
 
@@ -33,7 +34,10 @@ public final class TmtInstancedPaletteShader {
     private static final String FRAGMENT = """
             #version 430 compatibility
             uniform sampler2D uMaskMap;
+            uniform sampler2D uLightMap;
             uniform sampler2D uMaterialMap;
+            uniform vec2 uLightCoord;
+            uniform int uUseLightmap;
             uniform int uMaskHeight;
             uniform int uMaterialWidth;
             uniform int uMaterialHeight;
@@ -53,6 +57,14 @@ public final class TmtInstancedPaletteShader {
             vec2 spritePixel(vec2 localUv) {
                 vec2 texel = floor(clamp(localUv, 0.0, 0.999999) * 16.0);
                 return texel + vec2(0.5, 0.5);
+            }
+
+            vec3 applyLightmap(vec3 color) {
+                if (uUseLightmap == 0) {
+                    return color;
+                }
+                vec2 lightUv = clamp((uLightCoord + vec2(8.0, 8.0)) / 256.0, 0.0, 1.0);
+                return color * texture(uLightMap, lightUv).rgb;
             }
 
             vec4 sampleRamp(int rampIndex, float grey) {
@@ -88,7 +100,7 @@ public final class TmtInstancedPaletteShader {
                 if (mask.a < 0.1) discard;
 
                 if (materialType == 0) {
-                    fragColor = mask;
+                    fragColor = vec4(applyLightmap(mask.rgb), mask.a);
                     return;
                 }
 
@@ -100,25 +112,31 @@ public final class TmtInstancedPaletteShader {
                     vec4 source = sampleSourceTile(sourceIndex, vLocalTex);
                     mapped = ramp * source;
                 }
-                fragColor = vec4(mapped.rgb, mapped.a * mask.a);
+                fragColor = vec4(applyLightmap(mapped.rgb), mapped.a * mask.a);
             }
             """;
 
     private static int program;
+    private static Locations locations;
 
     private TmtInstancedPaletteShader() {
     }
 
-    public static boolean bind() {
+    public static boolean bind(boolean useLightmap) {
         ensureProgram();
         GL20.glUseProgram(program);
-        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uMaskMap"), 0);
-        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uMaterialMap"), 1);
-        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uMaskHeight"), TmtPartMaskMapManager.getHeight());
-        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uMaterialWidth"), TmtMaterialMapManager.getWidth());
-        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uMaterialHeight"), TmtMaterialMapManager.getHeight());
-        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uUnitColumns"), TmtMaterialMapManager.getUnitColumns());
-        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uSourceUnitBase"), TmtMaterialMapManager.getSourceUnitBase());
+        GL20.glUniform1i(locations.maskMap, 0);
+        GL20.glUniform1i(locations.lightMap, 1);
+        GL20.glUniform1i(locations.materialMap, 2);
+        GL20.glUniform1i(locations.useLightmap, useLightmap ? 1 : 0);
+        GL20.glUniform2f(locations.lightCoord,
+                OpenGlHelper.lastBrightnessX,
+                OpenGlHelper.lastBrightnessY);
+        GL20.glUniform1i(locations.maskHeight, TmtPartMaskMapManager.getHeight());
+        GL20.glUniform1i(locations.materialWidth, TmtMaterialMapManager.getWidth());
+        GL20.glUniform1i(locations.materialHeight, TmtMaterialMapManager.getHeight());
+        GL20.glUniform1i(locations.unitColumns, TmtMaterialMapManager.getUnitColumns());
+        GL20.glUniform1i(locations.sourceUnitBase, TmtMaterialMapManager.getSourceUnitBase());
         return true;
     }
 
@@ -143,6 +161,7 @@ public final class TmtInstancedPaletteShader {
         if (GL20.glGetProgrami(program, GL20.GL_LINK_STATUS) == 0) {
             throw new IllegalStateException(GL20.glGetProgramInfoLog(program, 32768));
         }
+        locations = new Locations(program);
         GL20.glDeleteShader(vertex);
         GL20.glDeleteShader(fragment);
     }
@@ -160,5 +179,31 @@ public final class TmtInstancedPaletteShader {
             throw new IllegalStateException(GL20.glGetShaderInfoLog(shader, 32768));
         }
         return shader;
+    }
+
+    private static final class Locations {
+        private final int maskMap;
+        private final int lightMap;
+        private final int materialMap;
+        private final int lightCoord;
+        private final int useLightmap;
+        private final int maskHeight;
+        private final int materialWidth;
+        private final int materialHeight;
+        private final int unitColumns;
+        private final int sourceUnitBase;
+
+        private Locations(int targetProgram) {
+            maskMap = GL20.glGetUniformLocation(targetProgram, "uMaskMap");
+            lightMap = GL20.glGetUniformLocation(targetProgram, "uLightMap");
+            materialMap = GL20.glGetUniformLocation(targetProgram, "uMaterialMap");
+            lightCoord = GL20.glGetUniformLocation(targetProgram, "uLightCoord");
+            useLightmap = GL20.glGetUniformLocation(targetProgram, "uUseLightmap");
+            maskHeight = GL20.glGetUniformLocation(targetProgram, "uMaskHeight");
+            materialWidth = GL20.glGetUniformLocation(targetProgram, "uMaterialWidth");
+            materialHeight = GL20.glGetUniformLocation(targetProgram, "uMaterialHeight");
+            unitColumns = GL20.glGetUniformLocation(targetProgram, "uUnitColumns");
+            sourceUnitBase = GL20.glGetUniformLocation(targetProgram, "uSourceUnitBase");
+        }
     }
 }

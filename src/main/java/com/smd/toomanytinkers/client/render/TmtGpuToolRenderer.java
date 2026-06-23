@@ -21,14 +21,22 @@ public final class TmtGpuToolRenderer {
     }
 
     public static boolean render(TmtGpuItemModel model) {
-        return render(model, true);
+        return render(model, true, true);
+    }
+
+    public static boolean render(TmtGpuItemModel model, boolean useLightmap) {
+        return render(model, true, useLightmap);
     }
 
     public static boolean renderPreparedModel(TmtGpuItemModel model) {
-        return render(model, false);
+        return render(model, false, true);
     }
 
-    private static boolean render(TmtGpuItemModel model, boolean centerModel) {
+    public static boolean renderPreparedModel(TmtGpuItemModel model, boolean useLightmap) {
+        return render(model, false, useLightmap);
+    }
+
+    private static boolean render(TmtGpuItemModel model, boolean centerModel, boolean useLightmap) {
         GlStateManager.enableBlend();
         GlStateManager.tryBlendFuncSeparate(
                 GlStateManager.SourceFactor.SRC_ALPHA,
@@ -43,7 +51,7 @@ public final class TmtGpuToolRenderer {
         boolean rendered = false;
         try {
             if (model instanceof TmtLayeredItemModel) {
-                rendered = renderInstanced((TmtLayeredItemModel) model);
+                rendered = renderInstanced((TmtLayeredItemModel) model, useLightmap);
             }
         } finally {
             GlStateManager.popMatrix();
@@ -57,12 +65,12 @@ public final class TmtGpuToolRenderer {
     private static void bindTextures() {
         Minecraft mc = Minecraft.getMinecraft();
         mc.getTextureManager().bindTexture(TmtPartMaskMapManager.getTextureLocation());
-        OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit + 1);
+        OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit + 2);
         mc.getTextureManager().bindTexture(TmtMaterialMapManager.getTextureLocation());
         OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
     }
 
-    private static boolean renderInstanced(TmtLayeredItemModel model) {
+    private static boolean renderInstanced(TmtLayeredItemModel model, boolean useLightmap) {
         RenderState state = RENDER_STATE.get();
         state.reset();
         collectCounts(model, state);
@@ -72,7 +80,7 @@ public final class TmtGpuToolRenderer {
         state.finishCounts();
 
         bindTextures();
-        TmtInstancedPaletteShader.bind();
+        TmtInstancedPaletteShader.bind(useLightmap);
         try {
             uploadInstances(model, state);
             uploadCommands(state);
@@ -105,9 +113,7 @@ public final class TmtGpuToolRenderer {
                 layer.getMaskTexture(),
                 layer.getGeometry().getDefinition(),
                 layer.getSideOpaque(),
-                layer.getCompositeOpaque(),
-                layer.getSideHash(),
-                layer.getCompositeHash());
+                layer.getCompositeOpaque());
     }
 
     private static void uploadInstances(TmtLayeredItemModel model, RenderState state) {
@@ -152,7 +158,7 @@ public final class TmtGpuToolRenderer {
     }
 
     private static void unbindExtraTextures() {
-        OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit + 1);
+        OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit + 2);
         GlStateManager.bindTexture(0);
         OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
         GlStateManager.bindTexture(0);

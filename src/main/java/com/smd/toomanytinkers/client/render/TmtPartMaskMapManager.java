@@ -46,7 +46,7 @@ public final class TmtPartMaskMapManager {
         return getOrRegister(texture).slot;
     }
 
-    public static boolean[] getOpacity(ResourceLocation texture) {
+    public static TmtMaskBits getOpacity(ResourceLocation texture) {
         return getOrRegister(texture).opaque;
     }
 
@@ -90,11 +90,13 @@ public final class TmtPartMaskMapManager {
     private static MaskEntry loadMask(ResourceLocation texture, int slot) {
         BufferedImage image = readTexture(texture);
         int[] pixels = new int[TILE_SIZE * TILE_SIZE];
-        boolean[] opaque = new boolean[TILE_SIZE * TILE_SIZE];
+        TmtMaskBits.Builder opaque = TmtMaskBits.builder();
         if (image == null) {
             java.util.Arrays.fill(pixels, 0xffff00ff);
-            java.util.Arrays.fill(opaque, true);
-            return new MaskEntry(slot, pixels, opaque);
+            for (int i = 0; i < TmtMaskBits.SIZE; i++) {
+                opaque.set(i);
+            }
+            return new MaskEntry(slot, pixels, opaque.build());
         }
 
         for (int y = 0; y < TILE_SIZE; y++) {
@@ -105,10 +107,12 @@ public final class TmtPartMaskMapManager {
                 int alpha = (argb >>> 24) & 0xff;
                 int index = y * TILE_SIZE + x;
                 pixels[index] = argb;
-                opaque[index] = alpha > 16;
+                if (alpha > 16) {
+                    opaque.set(index);
+                }
             }
         }
-        return new MaskEntry(slot, pixels, opaque);
+        return new MaskEntry(slot, pixels, opaque.build());
     }
 
     private static MaskEntry getOrRegister(ResourceLocation texture) {
@@ -158,9 +162,9 @@ public final class TmtPartMaskMapManager {
     private static final class MaskEntry {
         private final int slot;
         private final int[] pixels;
-        private final boolean[] opaque;
+        private final TmtMaskBits opaque;
 
-        private MaskEntry(int slot, int[] pixels, boolean[] opaque) {
+        private MaskEntry(int slot, int[] pixels, TmtMaskBits opaque) {
             this.slot = slot;
             this.pixels = pixels;
             this.opaque = opaque;

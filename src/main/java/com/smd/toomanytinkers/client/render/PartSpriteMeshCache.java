@@ -19,7 +19,6 @@ import org.lwjgl.opengl.GL30;
 import javax.annotation.Nullable;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
-import java.util.Arrays;
 import java.util.Objects;
 
 public final class PartSpriteMeshCache {
@@ -44,17 +43,15 @@ public final class PartSpriteMeshCache {
     @Nullable
     public static PartMesh get(ResourceLocation texture,
                                TmtPartDefinition definition,
-                               boolean[] sideOpaque,
-                               boolean[] compositeOpaque,
-                               int sideHash,
-                               int compositeHash) {
+                               TmtMaskBits sideOpaque,
+                               TmtMaskBits compositeOpaque) {
         Key key = new Key(texture,
                 definition.getOffsetX(),
                 definition.getOffsetY(),
                 definition.getRotationDegrees(),
                 definition.getZBias(),
-                sideHash,
-                compositeHash);
+                sideOpaque,
+                compositeOpaque);
         PartMesh existing = MESHES.get(key);
         if (existing != null) {
             return existing;
@@ -95,11 +92,9 @@ public final class PartSpriteMeshCache {
     }
 
     @Nullable
-    private static PartMesh build(Key key, boolean[] sideOpaque, boolean[] compositeOpaque) {
+    private static PartMesh build(Key key, TmtMaskBits sideOpaque, TmtMaskBits compositeOpaque) {
         int width = 16;
         int height = 16;
-        boolean[] side = normalizedMask(sideOpaque);
-        boolean[] composite = normalizedMask(compositeOpaque);
 
         FloatArrayList vertices = new FloatArrayList(256);
         IntArrayList indices = new IntArrayList(384);
@@ -118,7 +113,7 @@ public final class PartSpriteMeshCache {
 
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                if (!side[y * width + x]) {
+                if (!sideOpaque.get(y * width + x)) {
                     continue;
                 }
                 float x0 = x / (float) width;
@@ -129,28 +124,28 @@ public final class PartSpriteMeshCache {
                 float uc = (x + 0.5f) / width;
                 float vc = (y + 0.5f) / height;
 
-                if (isTransparent(composite, width, height, x - 1, y)) {
+                if (isTransparent(compositeOpaque, width, height, x - 1, y)) {
                     addQuad(vertices, indices, key,
                             x0, y0, BACK_Z, uc, vc,
                             x0, y0, FRONT_Z, uc, vc,
                             x0, y1, FRONT_Z, uc, vc,
                             x0, y1, BACK_Z, uc, vc);
                 }
-                if (isTransparent(composite, width, height, x + 1, y)) {
+                if (isTransparent(compositeOpaque, width, height, x + 1, y)) {
                     addQuad(vertices, indices, key,
                             x1, y1, BACK_Z, uc, vc,
                             x1, y1, FRONT_Z, uc, vc,
                             x1, y0, FRONT_Z, uc, vc,
                             x1, y0, BACK_Z, uc, vc);
                 }
-                if (isTransparent(composite, width, height, x, y - 1)) {
+                if (isTransparent(compositeOpaque, width, height, x, y - 1)) {
                     addQuad(vertices, indices, key,
                             x0, y1, BACK_Z, uc, vc,
                             x0, y1, FRONT_Z, uc, vc,
                             x1, y1, FRONT_Z, uc, vc,
                             x1, y1, BACK_Z, uc, vc);
                 }
-                if (isTransparent(composite, width, height, x, y + 1)) {
+                if (isTransparent(compositeOpaque, width, height, x, y + 1)) {
                     addQuad(vertices, indices, key,
                             x1, y0, BACK_Z, uc, vc,
                             x1, y0, FRONT_Z, uc, vc,
@@ -256,10 +251,6 @@ public final class PartSpriteMeshCache {
         return newBuffer;
     }
 
-    private static boolean[] normalizedMask(boolean[] mask) {
-        return mask.length == 16 * 16 ? mask : Arrays.copyOf(mask, 16 * 16);
-    }
-
     private static int nextPowerOfTwo(int value) {
         int out = 1;
         while (out < value) {
@@ -268,8 +259,8 @@ public final class PartSpriteMeshCache {
         return out;
     }
 
-    private static boolean isTransparent(boolean[] opaque, int width, int height, int x, int y) {
-        return x < 0 || y < 0 || x >= width || y >= height || !opaque[y * width + x];
+    private static boolean isTransparent(TmtMaskBits opaque, int width, int height, int x, int y) {
+        return x < 0 || y < 0 || x >= width || y >= height || !opaque.get(y * width + x);
     }
 
     private static void addQuad(FloatArrayList vertices, IntArrayList indices, Key key,
@@ -316,23 +307,23 @@ public final class PartSpriteMeshCache {
         private final int offsetY;
         private final float rotationDegrees;
         private final float zBias;
-        private final int sideHash;
-        private final int compositeHash;
+        private final TmtMaskBits sideOpaque;
+        private final TmtMaskBits compositeOpaque;
 
         private Key(ResourceLocation texture,
                     int offsetX,
                     int offsetY,
                     float rotationDegrees,
                     float zBias,
-                    int sideHash,
-                    int compositeHash) {
+                    TmtMaskBits sideOpaque,
+                    TmtMaskBits compositeOpaque) {
             this.texture = texture;
             this.offsetX = offsetX;
             this.offsetY = offsetY;
             this.rotationDegrees = rotationDegrees;
             this.zBias = zBias;
-            this.sideHash = sideHash;
-            this.compositeHash = compositeHash;
+            this.sideOpaque = sideOpaque;
+            this.compositeOpaque = compositeOpaque;
         }
 
         @Override
@@ -348,8 +339,8 @@ public final class PartSpriteMeshCache {
                     && offsetY == other.offsetY
                     && Float.floatToIntBits(rotationDegrees) == Float.floatToIntBits(other.rotationDegrees)
                     && Float.floatToIntBits(zBias) == Float.floatToIntBits(other.zBias)
-                    && sideHash == other.sideHash
-                    && compositeHash == other.compositeHash
+                    && sideOpaque.equals(other.sideOpaque)
+                    && compositeOpaque.equals(other.compositeOpaque)
                     && texture.equals(other.texture);
         }
 
@@ -358,8 +349,8 @@ public final class PartSpriteMeshCache {
             return Objects.hash(texture, offsetX, offsetY,
                     Float.floatToIntBits(rotationDegrees),
                     Float.floatToIntBits(zBias),
-                    sideHash,
-                    compositeHash);
+                    sideOpaque,
+                    compositeOpaque);
         }
     }
 
