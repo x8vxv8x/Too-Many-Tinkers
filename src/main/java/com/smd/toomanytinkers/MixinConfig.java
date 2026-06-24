@@ -31,6 +31,7 @@ public class MixinConfig implements IMixinConfigPlugin {
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         return switch (mixinClassName.split("\\.")[5]) {
             case "hei" -> Loader.isModLoaded("jei");
+            case "conarm" -> Loader.isModLoaded("conarm");
             default -> true;
         };
     }
